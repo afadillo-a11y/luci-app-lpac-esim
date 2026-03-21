@@ -40,7 +40,7 @@ function build_lpac_env()
     -- Use defaults, if configuration is not present in UCI
     if not config or not next(config) then
         config = {
-            apdu_backend = 'at',
+            apdu_backend = 'qmi',
             http_backend = 'curl',
             at_device = '/dev/ttyUSB3',
             qmi_device = '/dev/cdc-wdm0',
@@ -70,19 +70,23 @@ function build_lpac_env()
     end
 
     if config.at_device then
-        table.insert(env_vars, "AT_DEVICE=" .. config.at_device)
+        table.insert(env_vars, "LPAC_APDU_AT_DEVICE=" .. config.at_device)
     end
 
     if config.qmi_device then
-        table.insert(env_vars, "LPAC_QMI_DEV=" .. config.qmi_device)
+        table.insert(env_vars, "LPAC_APDU_QMI_DEVICE=" .. config.qmi_device)
+    end
+
+    if config.qmi_sim_slot then
+        table.insert(env_vars, "LPAC_APDU_QMI_UIM_SLOT=" .. config.qmi_sim_slot)
     end
 
     if config.mbim_device then
-        table.insert(env_vars, "MBIM_DEVICE=" .. config.mbim_device)
+        table.insert(env_vars, "LPAC_APDU_MBIM_DEVICE=" .. config.mbim_device)
     end
 
     if config.mbim_proxy then
-        table.insert(env_vars, "MBIM_USE_PROXY=" .. config.mbim_proxy)
+        table.insert(env_vars, "LPAC_APDU_MBIM_PROXY=" .. config.mbim_proxy)
     end
 
     if config.apdu_debug and config.apdu_debug ~= '0' then
@@ -104,7 +108,7 @@ end
 function exec_lpac_command(cmd_args, timeout_seconds)
     local env = build_lpac_env()
     local timeout = timeout_seconds or 30
-    local full_cmd = env .. " timeout " .. timeout .. " /usr/lib/lpac " .. cmd_args
+    local full_cmd = env .. " timeout " .. timeout .. " /usr/bin/lpac " .. cmd_args
     
     -- Debug
     luci.sys.exec("logger -t epm 'Executing: " .. full_cmd .. "'")
@@ -260,7 +264,7 @@ function epm_config()
     -- Use defaults, if configuration is not present in UCI
     if not config.epm then
         config.epm = {
-            apdu_backend = 'at',
+            apdu_backend = 'qmi',
             http_backend = 'curl',
             at_device = '/dev/ttyUSB3',
             qmi_device = '/dev/cdc-wdm0',
@@ -939,7 +943,7 @@ function reboot_modem()
 
     if not config or not config.reboot_method then
         config.reboot_method = 'at'
-        config.apdu_backend = 'at'
+        config.apdu_backend = 'qmi'
         config.at_device = '/dev/ttyUSB3'
         config.qmi_device = '/dev/cdc-wdm0'
         config.qmi_sim_slot = '1'
@@ -967,7 +971,7 @@ function reboot_modem()
         -- QMI method
         local qmi_device = config.reboot_qmi_device or config.qmi_device or '/dev/cdc-wdm0'
         local qmi_slot = config.reboot_qmi_slot or config.qmi_sim_slot or '1'
-        reboot_cmd = string.format("uqmi -d %s --uim-power-off --uim-slot=%s && sleep 2 && uqmi -d %s --uim-power-on --uim-slot=%s", 
+        reboot_cmd = string.format("qmicli -d %s --device-open-proxy --uim-sim-power-off=%s && sleep 2 && qmicli -d %s --device-open-proxy --uim-sim-power-on=%s", 
                                  qmi_device, qmi_slot, qmi_device, qmi_slot)
         method_used = "QMI"
         luci.sys.exec("logger -t epm 'Using QMI reboot method on " .. qmi_device .. " slot " .. qmi_slot .. "'")
