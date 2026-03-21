@@ -19,6 +19,7 @@ jobs:
       contents: write
     env:
       PKG_NAME: luci-app-epm-qmi
+      APP_DIR: luci-app-epm
 
     steps:
       - name: Extract version
@@ -52,7 +53,7 @@ jobs:
         run: |
           set -euxo pipefail
 
-          APPDIR="${GITHUB_WORKSPACE}/luci-app-epm"
+          APPDIR="${GITHUB_WORKSPACE}/${APP_DIR}"
           PKGROOT="${GITHUB_WORKSPACE}/pkgroot"
 
           test -d "${APPDIR}"
@@ -60,12 +61,16 @@ jobs:
           mkdir -p "${PKGROOT}"
 
           # 1) Copy LuCI Lua sources wholesale
-          mkdir -p "${PKGROOT}/usr/lib/lua/luci"
-          rsync -a "${APPDIR}/luasrc/" "${PKGROOT}/usr/lib/lua/luci/"
+          if [ -d "${APPDIR}/luasrc" ]; then
+            mkdir -p "${PKGROOT}/usr/lib/lua/luci"
+            rsync -a "${APPDIR}/luasrc/" "${PKGROOT}/usr/lib/lua/luci/"
+          fi
 
           # 2) Copy static resources wholesale
-          mkdir -p "${PKGROOT}/www/luci-static/resources"
-          rsync -a "${APPDIR}/htdocs/luci-static/resources/" "${PKGROOT}/www/luci-static/resources/"
+          if [ -d "${APPDIR}/htdocs/luci-static/resources" ]; then
+            mkdir -p "${PKGROOT}/www/luci-static/resources"
+            rsync -a "${APPDIR}/htdocs/luci-static/resources/" "${PKGROOT}/www/luci-static/resources/"
+          fi
 
           # 3) Copy root payload wholesale if present
           if [ -d "${APPDIR}/root" ]; then
@@ -84,22 +89,22 @@ jobs:
           mkdir -p "${PKGROOT}/etc/config"
           if [ ! -f "${PKGROOT}/etc/config/epm" ]; then
             cat > "${PKGROOT}/etc/config/epm" <<'EOF'
-          config epm 'config'
-              option apdu_backend 'qmi'
-              option http_backend 'curl'
-              option at_device '/dev/ttyUSB3'
-              option qmi_device '/dev/cdc-wdm0'
-              option qmi_sim_slot '1'
-              option mbim_device '/dev/cdc-wdm0'
-              option mbim_proxy '0'
-              option reboot_method 'qmi'
-              option reboot_at_command 'AT+CFUN=1,1'
-              option reboot_at_device '/dev/ttyUSB3'
-              option reboot_qmi_device '/dev/cdc-wdm0'
-              option reboot_qmi_slot '1'
-              option reboot_mbim_device '/dev/cdc-wdm0'
-              option reboot_custom_command 'echo "Custom reboot command here"'
-              option json_output '0'
+          config epm 'epm'
+          	option apdu_backend 'qmi'
+          	option http_backend 'curl'
+          	option qmi_device '/dev/cdc-wdm0'
+          	option at_device '/dev/ttyUSB3'
+          	option qmi_sim_slot '1'
+          	option mbim_proxy '0'
+          	option mbim_device '/dev/cdc-wdm0'
+          	option reboot_method 'qmi'
+          	option reboot_qmi_slot '1'
+          	option reboot_custom_command 'echo "Custom reboot command here"'
+          	option reboot_mbim_device '/dev/cdc-wdm0'
+          	option reboot_at_command 'AT+CFUN=1,1'
+          	option reboot_qmi_device '/dev/cdc-wdm0'
+          	option reboot_at_device '/dev/ttyUSB3'
+          	option json_output '0'
           EOF
           fi
 
@@ -126,20 +131,31 @@ jobs:
           EOF
           fi
 
-          # 7) If legacy menu file exists, adjust ACL dependency on the fly
+          # 7) Adjust legacy menu file on the fly if present
           if [ -f "${PKGROOT}/usr/share/luci/menu.d/luci-app-epm.json" ]; then
             sed -i 's/"luci-app-epm"/"luci-app-epm-qmi"/g' "${PKGROOT}/usr/share/luci/menu.d/luci-app-epm.json"
-            sed -i 's/"eSIM Profile Manager"/"eSIM Profile Manager (QMI)"/g' "${PKGROOT}/usr/share/luci/menu.d/luci-app-epm.json" || true
+            sed -i 's/"title":[[:space:]]*"eSIM Profile Manager"/"title": "eSIM Profile Manager (QMI)"/g' "${PKGROOT}/usr/share/luci/menu.d/luci-app-epm.json" || true
           fi
 
-          # 8) Normalize line endings for text assets
+          # 8) If qmi-specific menu file is absent but legacy exists, rename it in pkgroot
+          if [ -f "${PKGROOT}/usr/share/luci/menu.d/luci-app-epm.json" ] && [ ! -f "${PKGROOT}/usr/share/luci/menu.d/luci-app-epm-qmi.json" ]; then
+            mv "${PKGROOT}/usr/share/luci/menu.d/luci-app-epm.json" "${PKGROOT}/usr/share/luci/menu.d/luci-app-epm-qmi.json"
+          fi
+
+          # 9) Normalize line endings for text assets
           find "${PKGROOT}" -type f \( \
             -name '*.lua' -o -name '*.js' -o -name '*.json' -o -name '*.htm' -o -name '*.html' -o \
             -name '*.css' -o -path '*/etc/config/*' -o -name '*.sh' \
           \) -print0 | xargs -0 -r dos2unix
 
-          # 9) Show resulting tree for debugging
-          find "${PKGROOT}" -maxdepth 5 -type f | sort
+          # 10) Basic sanity checks
+          test -f "${PKGROOT}/etc/config/epm"
+          test -d "${PKGROOT}/usr/lib/lua/luci"
+          test -d "${PKGROOT}/www/luci-static/resources"
+          test -d "${PKGROOT}/usr/share/luci/menu.d"
+          test -d "${PKGROOT}/usr/share/rpcd/acl.d"
+
+          find "${PKGROOT}" -maxdepth 6 -type f | sort
 
       - name: Build IPK and APK packages with nFPM
         shell: bash
@@ -147,7 +163,6 @@ jobs:
           set -euxo pipefail
 
           export PKG_VER="${{ env.VERSION }}"
-          ARCHS=("aarch64_generic" "aarch64_cortex-a53")
 
           cat > postinst.sh <<'EOF'
           #!/bin/sh
@@ -195,13 +210,13 @@ jobs:
 
           chmod 755 postinst.sh prerm.sh postrm.sh
 
-          export PKG_DESC="LuCI frontend for lpac 2.3.0 using native QMI with AT fallback on OpenWrt. This package is named luci-app-epm-qmi to distinguish it from older uqmi/mbim-oriented variants."
+          export PKG_DESC="LuCI frontend for lpac 2.3.0 using native QMI with AT fallback on OpenWrt. This package is architecture-independent and is named luci-app-epm-qmi to distinguish it from older uqmi/mbim-oriented variants."
 
           export SOURCE_DATE_EPOCH=1704067200
-          for ARCH in "${ARCHS[@]}"; do
-            cat > nfpm_ipk.yaml <<EOF
+
+          cat > nfpm_ipk.yaml <<EOF
           name: ${PKG_NAME}
-          arch: ${ARCH}
+          arch: all
           platform: linux
           version: ${PKG_VER}
           maintainer: OpenWrt eSIM integration
@@ -231,14 +246,14 @@ jobs:
             preremove: ./prerm.sh
             postremove: ./postrm.sh
           EOF
-            nfpm package --config nfpm_ipk.yaml --packager ipk --target "${PKG_NAME}_${PKG_VER}_${ARCH}.ipk"
-          done
+
+          nfpm package --config nfpm_ipk.yaml --packager ipk --target "${PKG_NAME}_${PKG_VER}_all.ipk"
 
           unset SOURCE_DATE_EPOCH
-          for ARCH in "${ARCHS[@]}"; do
-            cat > nfpm_apk.yaml <<EOF
+
+          cat > nfpm_apk.yaml <<EOF
           name: ${PKG_NAME}
-          arch: ${ARCH}
+          arch: all
           platform: linux
           version: ${PKG_VER}
           maintainer: OpenWrt eSIM integration
@@ -267,8 +282,8 @@ jobs:
             preremove: ./prerm.sh
             postremove: ./postrm.sh
           EOF
-            nfpm package --config nfpm_apk.yaml --packager apk --target "${PKG_NAME}_${PKG_VER}_${ARCH}.apk"
-          done
+
+          nfpm package --config nfpm_apk.yaml --packager apk --target "${PKG_NAME}_${PKG_VER}_all.apk"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
