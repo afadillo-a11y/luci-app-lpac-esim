@@ -1,0 +1,282 @@
+name: Build and Release LuCI App EPM QMI for lpac 2.3.0
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      build_target:
+        description: 'Enter package version (e.g. 2.3.0-1) or branch label'
+        required: true
+        default: '2.3.0-1'
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      PKG_NAME: luci-app-epm-qmi
+
+    steps:
+      - name: Extract version
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.build_target }}" >> "$GITHUB_ENV"
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=nightly" >> "$GITHUB_ENV"
+          fi
+
+      - name: Checkout local repository
+        uses: actions/checkout@v4
+
+      - name: Install nFPM and helpers
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y dos2unix curl tar xz-utils jq
+
+          NFPM_VER="2.43.1"
+          curl -fsSL "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VER}/nfpm_${NFPM_VER}_Linux_x86_64.tar.gz" | tar -xz
+          sudo install -m 0755 nfpm /usr/local/bin/nfpm
+
+      - name: Generate LuCI package files
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          PKGROOT="${GITHUB_WORKSPACE}/pkgroot"
+
+          mkdir -p \
+            "${PKGROOT}/etc/config" \
+            "${PKGROOT}/usr/lib/lua/luci/controller" \
+            "${PKGROOT}/usr/lib/lua/luci/view/epm" \
+            "${PKGROOT}/www/luci-static/resources/epm/js" \
+            "${PKGROOT}/usr/share/luci/menu.d" \
+            "${PKGROOT}/usr/share/rpcd/acl.d"
+
+          cat > "${PKGROOT}/etc/config/epm" <<'EOF'
+          config epm 'config'
+              option apdu_backend 'qmi'
+              option http_backend 'curl'
+              option at_device '/dev/ttyUSB3'
+              option qmi_device '/dev/cdc-wdm0'
+              option qmi_sim_slot '1'
+              option mbim_device '/dev/cdc-wdm0'
+              option mbim_proxy '0'
+              option reboot_method 'qmi'
+              option reboot_at_command 'AT+CFUN=1,1'
+              option reboot_at_device '/dev/ttyUSB3'
+              option reboot_qmi_device '/dev/cdc-wdm0'
+              option reboot_qmi_slot '1'
+              option reboot_mbim_device '/dev/cdc-wdm0'
+              option reboot_custom_command 'echo "Custom reboot command here"'
+              option json_output '0'
+          EOF
+
+          # These files are expected to exist in your repo already.
+          install -m 0644 ./luci-app-epm/luasrc/controller/epm.lua \
+            "${PKGROOT}/usr/lib/lua/luci/controller/epm.lua"
+
+          install -m 0644 ./luci-app-epm/luasrc/view/epm/config.htm \
+            "${PKGROOT}/usr/lib/lua/luci/view/epm/config.htm"
+
+          install -m 0644 ./luci-app-epm/htdocs/luci-static/resources/epm/js/epm-config.js \
+            "${PKGROOT}/www/luci-static/resources/epm/js/epm-config.js"
+
+          cat > "${PKGROOT}/usr/share/luci/menu.d/luci-app-epm-qmi.json" <<'EOF'
+          {
+            "admin/modem/epm": {
+              "title": "eSIM Profile Manager (QMI)",
+              "order": 60,
+              "action": {
+                "type": "template",
+                "path": "epm/config"
+              },
+              "depends": {
+                "acl": [ "luci-app-epm-qmi" ]
+              }
+            }
+          }
+          EOF
+
+          cat > "${PKGROOT}/usr/share/rpcd/acl.d/luci-app-epm-qmi.json" <<'EOF'
+          {
+            "luci-app-epm-qmi": {
+              "description": "Grant access to eSIM Profile Manager QMI/AT frontend for lpac 2.3.0",
+              "read": {
+                "uci": [ "epm" ],
+                "file": {
+                  "/usr/bin/lpac": [ "exec" ],
+                  "/usr/sbin/qmicli": [ "exec" ],
+                  "/sbin/logread": [ "exec" ]
+                }
+              },
+              "write": {
+                "uci": [ "epm" ]
+              }
+            }
+          }
+          EOF
+
+          dos2unix \
+            "${PKGROOT}/etc/config/epm" \
+            "${PKGROOT}/usr/lib/lua/luci/controller/epm.lua" \
+            "${PKGROOT}/usr/lib/lua/luci/view/epm/config.htm" \
+            "${PKGROOT}/www/luci-static/resources/epm/js/epm-config.js" \
+            "${PKGROOT}/usr/share/luci/menu.d/luci-app-epm-qmi.json" \
+            "${PKGROOT}/usr/share/rpcd/acl.d/luci-app-epm-qmi.json"
+
+      - name: Build IPK and APK packages with nFPM
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          export PKG_VER="${{ env.VERSION }}"
+          ARCHS=("aarch64_generic" "aarch64_cortex-a53")
+
+          cat > postinst.sh <<'EOF'
+          #!/bin/sh
+          set +e
+
+          echo "=============================================="
+          echo "luci-app-epm-qmi installed."
+          echo
+          echo "This is the QMI/AT LuCI frontend for lpac 2.3.0."
+          echo "The lpac backend is NOT bundled in this package."
+          echo
+          echo "Install the matching backend package separately."
+          echo "Examples on OpenWrt:"
+          echo "  opkg install lpac libqmi glib2 libcurl"
+          echo "or on APK-based systems:"
+          echo "  apk add lpac libqmi glib2 libcurl"
+          echo
+          echo "Then reopen LuCI."
+          echo "=============================================="
+
+          if [ -x /etc/init.d/rpcd ]; then
+            /etc/init.d/rpcd reload >/dev/null 2>&1 || true
+          fi
+
+          rm -f /tmp/luci-indexcache /tmp/luci-modulecache >/dev/null 2>&1 || true
+          exit 0
+          EOF
+
+          cat > prerm.sh <<'EOF'
+          #!/bin/sh
+          set +e
+          rm -f /tmp/luci-indexcache /tmp/luci-modulecache >/dev/null 2>&1 || true
+          exit 0
+          EOF
+
+          cat > postrm.sh <<'EOF'
+          #!/bin/sh
+          set +e
+          if [ -x /etc/init.d/rpcd ]; then
+            /etc/init.d/rpcd reload >/dev/null 2>&1 || true
+          fi
+          rm -f /tmp/luci-indexcache /tmp/luci-modulecache >/dev/null 2>&1 || true
+          exit 0
+          EOF
+
+          chmod 755 postinst.sh prerm.sh postrm.sh
+
+          export PKG_DESC="LuCI frontend for lpac 2.3.0 using QMI with AT fallback on OpenWrt. Package name is separated as luci-app-epm-qmi to distinguish it from older uqmi/mbim-oriented variants."
+
+          export SOURCE_DATE_EPOCH=1704067200
+          for ARCH in "${ARCHS[@]}"; do
+            cat > nfpm_ipk.yaml <<EOF
+          name: ${PKG_NAME}
+          arch: ${ARCH}
+          platform: linux
+          version: ${PKG_VER}
+          maintainer: OpenWrt eSIM integration
+          description: "${PKG_DESC}"
+          homepage: https://github.com/estkme-group/lpac
+          contents:
+            - src: ./pkgroot/usr/lib/lua/luci/controller/
+              dst: /usr/lib/lua/luci/controller
+              type: tree
+            - src: ./pkgroot/usr/lib/lua/luci/view/epm/
+              dst: /usr/lib/lua/luci/view/epm
+              type: tree
+            - src: ./pkgroot/www/luci-static/resources/epm/js/
+              dst: /www/luci-static/resources/epm/js
+              type: tree
+            - src: ./pkgroot/usr/share/luci/menu.d/
+              dst: /usr/share/luci/menu.d
+              type: tree
+            - src: ./pkgroot/usr/share/rpcd/acl.d/
+              dst: /usr/share/rpcd/acl.d
+              type: tree
+            - src: ./pkgroot/etc/config/epm
+              dst: /etc/config/epm
+              type: config|noreplace
+              file_info:
+                mode: 0644
+                mtime: 2024-01-01T00:00:00Z
+          scripts:
+            postinstall: ./postinst.sh
+            preremove: ./prerm.sh
+            postremove: ./postrm.sh
+          EOF
+            nfpm package --config nfpm_ipk.yaml --packager ipk --target "${PKG_NAME}_${PKG_VER}_${ARCH}.ipk"
+          done
+
+          unset SOURCE_DATE_EPOCH
+          for ARCH in "${ARCHS[@]}"; do
+            cat > nfpm_apk.yaml <<EOF
+          name: ${PKG_NAME}
+          arch: ${ARCH}
+          platform: linux
+          version: ${PKG_VER}
+          maintainer: OpenWrt eSIM integration
+          description: "${PKG_DESC}"
+          homepage: https://github.com/estkme-group/lpac
+          contents:
+            - src: ./pkgroot/usr/lib/lua/luci/controller/
+              dst: /usr/lib/lua/luci/controller
+              type: tree
+            - src: ./pkgroot/usr/lib/lua/luci/view/epm/
+              dst: /usr/lib/lua/luci/view/epm
+              type: tree
+            - src: ./pkgroot/www/luci-static/resources/epm/js/
+              dst: /www/luci-static/resources/epm/js
+              type: tree
+            - src: ./pkgroot/usr/share/luci/menu.d/
+              dst: /usr/share/luci/menu.d
+              type: tree
+            - src: ./pkgroot/usr/share/rpcd/acl.d/
+              dst: /usr/share/rpcd/acl.d
+              type: tree
+            - src: ./pkgroot/etc/config/epm
+              dst: /etc/config/epm
+              type: config|noreplace
+              file_info:
+                mode: 0644
+          scripts:
+            postinstall: ./postinst.sh
+            preremove: ./prerm.sh
+            postremove: ./postrm.sh
+          EOF
+            nfpm package --config nfpm_apk.yaml --packager apk --target "${PKG_NAME}_${PKG_VER}_${ARCH}.apk"
+          done
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        with:
+          files: |
+            *.ipk
+            *.apk
+          name: Release ${{ env.VERSION }}
+          tag_name: ${{ env.VERSION }}
+          prerelease: false
+          draft: false
