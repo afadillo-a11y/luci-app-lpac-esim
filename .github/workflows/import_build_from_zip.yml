@@ -1,0 +1,108 @@
+name: import-build-from-zip
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip_path:
+        description: "Путь к zip внутри репозитория"
+        required: true
+        default: "_incoming/luci-app-lpac-esim-v1.2.1.zip"
+      commit_changes:
+        description: "Закоммитить разложенные файлы в репозиторий"
+        required: true
+        default: "true"
+
+permissions:
+  contents: write
+
+jobs:
+  import-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate zip exists
+        shell: bash
+        run: |
+          set -e
+          test -f "${{ inputs.zip_path }}"
+
+      - name: Unpack zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _workzip
+          mkdir -p _workzip
+          unzip -q "${{ inputs.zip_path }}" -d _workzip
+
+      - name: Import files from zip into repo tree
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SRC="_workzip/luci-app-lpac-esim"
+          test -d "$SRC"
+
+          # Чистим только те каталоги, которые реально импортируем,
+          # чтобы не тянуть за собой старые хвосты
+          rm -rf htdocs luasrc root/etc/config root/usr/share/luci/menu.d root/usr/share/rpcd/acl.d scripts
+          mkdir -p htdocs luasrc root/etc/config root/usr/share/luci/menu.d root/usr/share/rpcd/acl.d scripts
+
+          # Копируем как есть из zip
+          cp -a "$SRC/htdocs/." htdocs/
+          cp -a "$SRC/src/usr/lib/lua/luci/." luasrc/
+          cp -a "$SRC/root/usr/share/luci/menu.d/." root/usr/share/luci/menu.d/
+          cp -a "$SRC/root/usr/share/rpcd/acl.d/." root/usr/share/rpcd/acl.d/
+          cp -a "$SRC/etc/config/." root/etc/config/
+          cp -a "$SRC/scripts/." scripts/
+          cp -a "$SRC/nfpm.yaml" nfpm.yaml
+
+          # Если хотите хранить backend в репо тоже под root/usr/bin
+          mkdir -p root/usr/bin
+          cp -a "$SRC/src/usr/bin/." root/usr/bin/
+
+          # Нормализация прав
+          chmod +x root/usr/bin/* || true
+          chmod +x scripts/* || true
+
+      - name: Commit imported changes
+        if: ${{ inputs.commit_changes == 'true' }}
+        shell: bash
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add htdocs luasrc root scripts nfpm.yaml
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+
+          git commit -m "Import build from ZIP: ${{ inputs.zip_path }}"
+          git push
+
+      - name: Set up nfpm
+        uses: goreleaser/nfpm-action@v1
+        with:
+          version: latest
+
+      - name: Build IPK
+        shell: bash
+        run: |
+          mkdir -p dist/ipk
+          nfpm package --packager ipk --config nfpm.yaml --target dist/ipk/
+
+      - name: Build APK
+        shell: bash
+        run: |
+          mkdir -p dist/apk
+          nfpm package --packager apk --config nfpm.yaml --target dist/apk/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: built-packages
+          path: dist/
