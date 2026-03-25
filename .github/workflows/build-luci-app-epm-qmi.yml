@@ -19,8 +19,6 @@ jobs:
       contents: write
     env:
       PKG_NAME: luci-app-lpac-esim
-      # Source directories (relative to repo root, inside luci-app/)
-      SRC_DIR: luci-app
 
     steps:
       - name: Extract version
@@ -59,50 +57,53 @@ jobs:
         run: |
           set -euxo pipefail
 
-          SRCDIR="${GITHUB_WORKSPACE}/${SRC_DIR}"
-          PKGROOT="${GITHUB_WORKSPACE}/${SRC_DIR}/pkgroot"
+          REPO_ROOT="${GITHUB_WORKSPACE}"
+          PKGROOT="${GITHUB_WORKSPACE}/pkgroot"
 
-          test -d "${SRCDIR}"
+          test -d "${REPO_ROOT}"
+          test -d "${REPO_ROOT}/src/usr/lib/lua/luci"
+          test -d "${REPO_ROOT}/htdocs"
+          test -d "${REPO_ROOT}/etc/config"
+          test -f "${REPO_ROOT}/nfpm.yaml"
+
           rm -rf "${PKGROOT}"
           mkdir -p "${PKGROOT}"
 
-          # 1) Lua controller + views
-          if [ -d "${SRCDIR}/src/usr/lib/lua/luci" ]; then
-            mkdir -p "${PKGROOT}/usr/lib/lua/luci"
-            rsync -a "${SRCDIR}/src/usr/lib/lua/luci/" "${PKGROOT}/usr/lib/lua/luci/"
-          fi
+          # 1) Lua controller + model + views
+          mkdir -p "${PKGROOT}/usr/lib/lua/luci"
+          rsync -a "${REPO_ROOT}/src/usr/lib/lua/luci/" "${PKGROOT}/usr/lib/lua/luci/"
 
           # 2) Static web resources (JS, CSS)
-          if [ -d "${SRCDIR}/htdocs/luci-static/resources" ]; then
+          if [ -d "${REPO_ROOT}/htdocs/luci-static/resources" ]; then
             mkdir -p "${PKGROOT}/www/luci-static/resources"
-            rsync -a "${SRCDIR}/htdocs/luci-static/resources/" "${PKGROOT}/www/luci-static/resources/"
+            rsync -a "${REPO_ROOT}/htdocs/luci-static/resources/" "${PKGROOT}/www/luci-static/resources/"
           fi
 
           # 3) ACL + menu.d from root/
-          if [ -d "${SRCDIR}/root" ]; then
-            rsync -a "${SRCDIR}/root/" "${PKGROOT}/"
+          if [ -d "${REPO_ROOT}/root" ]; then
+            rsync -a "${REPO_ROOT}/root/" "${PKGROOT}/"
           fi
 
-          # 4) Normalize menu path: ensure under luci/menu.d
+          # 4) Normalize menu path if legacy tree appears
           mkdir -p "${PKGROOT}/usr/share/luci/menu.d"
           if [ -d "${PKGROOT}/usr/share/menu.d" ]; then
             rsync -a "${PKGROOT}/usr/share/menu.d/" "${PKGROOT}/usr/share/luci/menu.d/"
             rm -rf "${PKGROOT}/usr/share/menu.d"
           fi
 
-          # 5) UCI default config
+          # 5) UCI config from etc/config
           mkdir -p "${PKGROOT}/etc/config"
-          if [ -f "${SRCDIR}/etc/config/lpac-esim" ]; then
-            cp "${SRCDIR}/etc/config/lpac-esim" "${PKGROOT}/etc/config/lpac-esim"
+          if [ -f "${REPO_ROOT}/etc/config/lpac-esim" ]; then
+            cp "${REPO_ROOT}/etc/config/lpac-esim" "${PKGROOT}/etc/config/lpac-esim"
           fi
 
-          # 6) Normalize line endings (CRLF → LF)
+          # 6) Normalize line endings
           find "${PKGROOT}" -type f \( \
             -name '*.lua' -o -name '*.js' -o -name '*.json' -o -name '*.htm' \
             -o -name '*.css' -o -path '*/etc/config/*' \
           \) -print0 | xargs -0 -r dos2unix
 
-          # 7) Strip BOM if present
+          # 7) Strip UTF-8 BOM if present
           find "${PKGROOT}" -type f \( -name '*.lua' -o -name '*.js' -o -name '*.htm' \) \
             -print0 | xargs -0 -r sed -i '1s/^\xef\xbb\xbf//'
 
@@ -119,21 +120,18 @@ jobs:
 
       - name: Build IPK and APK packages
         shell: bash
-        working-directory: ${{ env.SRC_DIR }}
         run: |
           set -euxo pipefail
 
           export PKG_VER="${{ env.VERSION }}"
-
-          # Build IPK (opkg)
           export SOURCE_DATE_EPOCH=1704067200
+
           nfpm package \
             --config nfpm.yaml \
             --packager ipk \
             --target "${PKG_NAME}_${PKG_VER}_all.ipk"
           echo "Built: ${PKG_NAME}_${PKG_VER}_all.ipk"
 
-          # Build APK (apk-tools, OpenWrt 24+)
           unset SOURCE_DATE_EPOCH
           nfpm package \
             --config nfpm.yaml \
@@ -148,36 +146,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         with:
           files: |
-            ${{ env.SRC_DIR }}/*.ipk
-            ${{ env.SRC_DIR }}/*.apk
+            *.ipk
+            *.apk
           name: "LuCI ${{ env.VERSION }}"
           tag_name: "luci-v${{ env.VERSION }}"
           prerelease: false
           draft: false
-          body: |
-            ## luci-app-lpac-esim ${{ env.VERSION }}
-
-            LuCI WebUI for eSIM profile management on OpenWrt.
-            Pure Lua + HTML + JS — **arch: all**, works on any OpenWrt target.
-
-            ### Features
-            - Profile list / switch / download / delete / rename
-            - QMI, AT, and MBIM backend support
-            - Async operations with real success/error result
-            - Modem reboot with 3-level cascade
-            - Notification management (process + clear)
-            - UCI-based configuration
-
-            ### Requirements
-            - `lpac-esim-qmi` backend package (installed separately)
-            - `luci-base`
-
-            ### Installation (opkg)
-            ```sh
-            opkg install luci-app-lpac-esim_${{ env.VERSION }}_all.ipk
-            ```
-
-            ### Installation (apk — OpenWrt 24+)
-            ```sh
-            apk add --allow-untrusted luci-app-lpac-esim_${{ env.VERSION }}_all.apk
-            ```
