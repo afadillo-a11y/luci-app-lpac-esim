@@ -21,7 +21,6 @@ description: |
   chip info, notification management, UCI-based configuration.
 depends:
   - luci-base
-  - lpac-esim-qmi
 contents:
   - src: ./pkgroot/usr/lib/lua/luci/
     dst: /usr/lib/lua/luci
