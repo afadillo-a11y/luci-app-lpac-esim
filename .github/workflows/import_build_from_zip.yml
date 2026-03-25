@@ -7,14 +7,14 @@ on:
         description: "Путь к zip внутри репозитория"
         required: true
         default: "_incoming/luci-app-lpac-esim-v1.2.1.zip"
-      commit_message:
-        description: "Текст коммита"
-        required: true
-        default: "Import files from ZIP"
       source_root:
         description: "Корневая папка внутри zip"
         required: true
         default: "luci-app-lpac-esim"
+      commit_message:
+        description: "Текст коммита"
+        required: true
+        default: "Import files from ZIP"
 
 permissions:
   contents: write
@@ -63,78 +63,85 @@ jobs:
           echo "Cannot detect source root inside zip"
           exit 1
 
-      - name: Show detected source tree
+      - name: Validate expected zip layout
         shell: bash
         run: |
           set -euo pipefail
-          echo "Detected source: ${{ steps.detect.outputs.src }}"
-          find "${{ steps.detect.outputs.src }}" -maxdepth 3 -type f | sort | sed -n '1,200p'
-
-      - name: Import files into repository layout
-        shell: bash
-        run: |
-          set -euo pipefail
-
           SRC="${{ steps.detect.outputs.src }}"
 
-          # Проверка ожидаемых каталогов
           test -d "$SRC/htdocs"
           test -d "$SRC/src/usr/lib/lua/luci"
           test -d "$SRC/etc/config"
           test -f "$SRC/nfpm.yaml"
 
-          # Чистим только импортируемые части дерева
-          rm -rf htdocs
-          rm -rf luasrc
-          rm -rf root/etc/config
-          rm -rf root/usr/share/luci/menu.d
-          rm -rf root/usr/share/rpcd/acl.d
-          rm -rf root/usr/bin
-          rm -rf scripts
+          echo "ZIP layout is valid"
 
-          # Создаём целевые каталоги
+      - name: Create target directories in repo if missing
+        shell: bash
+        run: |
+          set -euo pipefail
+
           mkdir -p htdocs
-          mkdir -p luasrc
-          mkdir -p root/etc/config
+          mkdir -p src/usr
+          mkdir -p src/usr/lib/lua/luci
+          mkdir -p etc/config
           mkdir -p root/usr/share/luci/menu.d
           mkdir -p root/usr/share/rpcd/acl.d
-          mkdir -p root/usr/bin
           mkdir -p scripts
 
-          # Копируем web-статику
+      - name: Import files preserving repo layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="${{ steps.detect.outputs.src }}"
+
+          # Чистим только те части дерева, которые импортируются из zip
+          rm -rf htdocs/*
+          rm -rf src/usr/*
+          rm -rf etc/config/*
+          rm -rf root/usr/share/luci/menu.d/*
+          rm -rf root/usr/share/rpcd/acl.d/*
+          rm -rf scripts/*
+
+          # htdocs -> htdocs
           cp -a "$SRC/htdocs/." htdocs/
 
-          # Копируем luci lua tree
-          cp -a "$SRC/src/usr/lib/lua/luci/." luasrc/
+          # src/usr -> src/usr
+          cp -a "$SRC/src/usr/." src/usr/
 
-          # Копируем конфиг
-          cp -a "$SRC/etc/config/." root/etc/config/
+          # etc/config -> etc/config
+          cp -a "$SRC/etc/config/." etc/config/
 
-          # Копируем menu.d и acl.d если есть
+          # root/usr/share/luci/menu.d -> root/usr/share/luci/menu.d
           if [ -d "$SRC/root/usr/share/luci/menu.d" ]; then
             cp -a "$SRC/root/usr/share/luci/menu.d/." root/usr/share/luci/menu.d/
           fi
 
+          # root/usr/share/rpcd/acl.d -> root/usr/share/rpcd/acl.d
           if [ -d "$SRC/root/usr/share/rpcd/acl.d" ]; then
             cp -a "$SRC/root/usr/share/rpcd/acl.d/." root/usr/share/rpcd/acl.d/
           fi
 
-          # Копируем backend/bin если есть
-          if [ -d "$SRC/src/usr/bin" ]; then
-            cp -a "$SRC/src/usr/bin/." root/usr/bin/
-          fi
-
-          # Копируем scripts если есть
+          # scripts -> scripts
           if [ -d "$SRC/scripts" ]; then
             cp -a "$SRC/scripts/." scripts/
           fi
 
-          # Обновляем nfpm-конфиг
+          # nfpm config
           cp -a "$SRC/nfpm.yaml" nfpm.yaml
 
-          # Нормализуем права
-          find root/usr/bin -type f -exec chmod +x {} \; 2>/dev/null || true
-          find scripts -type f -exec chmod +x {} \; 2>/dev/null || true
+      - name: Normalize executable bits
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -d src/usr/bin ]; then
+            find src/usr/bin -type f -exec chmod +x {} \;
+          fi
+
+          if [ -d scripts ]; then
+            find scripts -type f -exec chmod +x {} \;
+          fi
 
       - name: Show git diff summary
         shell: bash
@@ -151,7 +158,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add htdocs luasrc root scripts nfpm.yaml
+          git add htdocs src etc root scripts nfpm.yaml
 
           if git diff --cached --quiet; then
             echo "No changes to commit"
