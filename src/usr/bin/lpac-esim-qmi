@@ -91,7 +91,7 @@ title() { hr; say "  $APP_NAME v$APP_VER"; hr; }
 run_with_timeout() {
     t_sec=$1; shift
     if [ -n "$TIMEOUT_BIN" ]; then "$TIMEOUT_BIN" "$t_sec" "$@"; return $?; fi
-    ( "$@" ) &
+    ( "$@" ) >/dev/null 2>&1 &
     pid=$!; count=0
     while [ "$count" -lt "$t_sec" ]; do
         if ! kill -0 "$pid" 2>/dev/null; then wait "$pid" 2>/dev/null; return $?; fi
@@ -123,7 +123,7 @@ parse_args() {
             --no-color)       NO_COLOR=1 ;;
             --api)            API_MODE=1; NONINTERACTIVE=1; QUIET=1; NO_COLOR=1 ;;
             --non-interactive) NONINTERACTIVE=1 ;;
-            doctor|status|chip|profiles|notif-clear|notif-list|notif-process|modem-status|select-devices|reboot-modem|lock-status)
+            doctor|status|chip|profiles|notif-clear|notif-list|notif-process|modem-status|select-devices|reboot-modem|lock-status|syslog|soft-reset|usb-reset|uicc-reset)
                               COMMAND="$1" ;;
             enable|disable|switch)
                               COMMAND="$1"; shift; COMMAND_ARG="$1" ;;
@@ -354,7 +354,11 @@ detect_modem_index() {
     "$MMCLI_BIN" -L 2>/dev/null | sed -n 's|.*/Modem/\([0-9][0-9]*\).*|\1|p' | tail -n 1
 }
 
-mm_field() { file="$1"; key="$2"; sed -n "s/.*$key:[[:space:]]*//p" "$file" | head -n 1; }
+mm_field() {
+  file="$1"; key="$2"
+  val="$(sed -n "s/.*$key:[[:space:]]*//p" "$file" | head -n 1)"
+  printf '%s' "$val" | sed "$(printf 's/\033\[[0-9;]*m//g')"
+}
 
 print_modem_status() {
     [ -n "$MMCLI_BIN" ] || { warn "mmcli not available"; return 1; }
@@ -595,7 +599,7 @@ api_ok() {
 # $1 = message/error code string, $2 = human-readable detail
 api_err() {
     msg="${1:-error}"; detail="${2:-unknown error}"
-    "$JQ_BIN" -n --arg m "$msg" --arg d "$detail" \
+    "$JQ_BIN" -nc --arg m "$msg" --arg d "$detail" \
         '{"type":"lpa","payload":{"code":-1,"message":$m,"data":{"msg":$d}}}' 2>/dev/null \
         || printf '{"type":"lpa","payload":{"code":-1,"message":"%s","data":{"msg":"(jq unavailable)"}}}\n' "$msg"
 }
@@ -617,7 +621,7 @@ api_check_lock() {
 # $1 = "success" or "error", $2 = message string
 async_finish() {
     status="${1:-error}"; msg="${2:-unknown}"
-    "$JQ_BIN" -n --arg s "$status" --arg m "$msg" \
+    "$JQ_BIN" -nc --arg s "$status" --arg m "$msg" \
         '{"success":($s == "success"),"message":$m}' > "$RESULT_FILE" 2>/dev/null
     rm -f "$LOCK_FILE"
 }
@@ -697,7 +701,7 @@ api_modem_status() {
     m_sig="$(mm_field "$out" "signal quality")"
     m_tech="$(mm_field "$out" "access tech")"
     # Use jq for safe JSON construction (handles operator names with special chars)
-    "$JQ_BIN" -n \
+    "$JQ_BIN" -nc \
         --arg idx   "$idx" \
         --arg model "$m_model" \
         --arg state "$m_st" \
@@ -747,7 +751,7 @@ api_switch() {
 
     # Already active — no-op, return immediately
     if [ "$t_state" = "enabled" ]; then
-        "$JQ_BIN" -n --arg iccid "$t_iccid" --arg nick "$t_nick" \
+        "$JQ_BIN" -nc --arg iccid "$t_iccid" --arg nick "$t_nick" \
             '{"type":"lpa","payload":{"code":0,"message":"already_active","data":{"iccid":$iccid,"nickname":$nick}}}'
         return 0
     fi
@@ -764,13 +768,13 @@ api_switch() {
             async_finish "error" "Profile switch failed for $t_iccid"
         fi
         syslog_msg "API: Profile switch background job completed | $t_iccid"
-    ) &
+    ) >/dev/null 2>&1 &
     bgpid=$!
     NONINTERACTIVE=0
 
     printf '%s\n' "$bgpid" > "$LOCK_FILE"
 
-    "$JQ_BIN" -n \
+    "$JQ_BIN" -nc \
         --arg iccid  "$t_iccid" \
         --arg nick   "$t_nick" \
         --argjson pid "$bgpid" \
@@ -799,12 +803,12 @@ api_reboot() {
             async_finish "error" "Modem reboot failed"
         fi
         syslog_msg "API: Hard reboot background job completed"
-    ) &
+    ) >/dev/null 2>&1 &
     bgpid=$!
 
     printf '%s\n' "$bgpid" > "$LOCK_FILE"
 
-    "$JQ_BIN" -n --argjson pid "$bgpid" \
+    "$JQ_BIN" -nc --argjson pid "$bgpid" \
         '{"type":"lpa","payload":{"code":0,"message":"processing","data":{"status":"rebooting","pid":$pid,"poll_url":"lock-status"}}}'
     return 0
 }
@@ -848,12 +852,12 @@ api_download() {
             async_finish "error" "Profile download failed (lpac code: ${code:-unknown})"
             syslog_msg "API: Profile download failed (code: ${code:-unknown})"
         fi
-    ) &
+    ) >/dev/null 2>&1 &
     bgpid=$!
 
     printf '%s\n' "$bgpid" > "$LOCK_FILE"
 
-    "$JQ_BIN" -n --argjson pid "$bgpid" \
+    "$JQ_BIN" -nc --argjson pid "$bgpid" \
         '{"type":"lpa","payload":{"code":0,"message":"processing","data":{"status":"downloading","pid":$pid,"poll_url":"lock-status"}}}'
     return 0
 }
@@ -884,7 +888,7 @@ api_delete() {
     out="${TMP_DIR}/delete.json"
     if run_lpac_json_to_file "profile delete $(sq "$t_iccid")" "$out" 30 && [ "$(json_code "$out")" = "0" ]; then
         syslog_msg "API: Profile deleted successfully: $t_nick ($t_iccid)"
-        "$JQ_BIN" -n --arg iccid "$t_iccid" --arg nick "$t_nick" \
+        "$JQ_BIN" -nc --arg iccid "$t_iccid" --arg nick "$t_nick" \
             '{"type":"lpa","payload":{"code":0,"message":"success","data":{"deleted":true,"iccid":$iccid,"nickname":$nick}}}'
     else
         api_err "delete_failed" "Failed to delete profile $t_iccid"
@@ -901,7 +905,7 @@ api_nickname() {
     out="${TMP_DIR}/nickname.json"
     if run_lpac_json_to_file "profile nickname $(sq "$iccid") $(sq "$nickname")" "$out" 15 && [ "$(json_code "$out")" = "0" ]; then
         syslog_msg "API: Profile renamed: $iccid -> $nickname"
-        "$JQ_BIN" -n --arg iccid "$iccid" --arg nick "$nickname" \
+        "$JQ_BIN" -nc --arg iccid "$iccid" --arg nick "$nickname" \
             '{"type":"lpa","payload":{"code":0,"message":"success","data":{"iccid":$iccid,"nickname":$nick}}}'
     else
         api_err "rename_failed" "Failed to rename profile $iccid"
@@ -927,14 +931,88 @@ api_notif_process() {
             async_finish "error" "Notification processing failed (lpac code: ${code:-unknown})"
             syslog_msg "API: Notification processing failed (code: ${code:-unknown})"
         fi
-    ) &
+    ) >/dev/null 2>&1 &
     bgpid=$!
 
     printf '%s\n' "$bgpid" > "$LOCK_FILE"
 
-    "$JQ_BIN" -n --argjson pid "$bgpid" \
+    "$JQ_BIN" -nc --argjson pid "$bgpid" \
         '{"type":"lpa","payload":{"code":0,"message":"processing","data":{"status":"processing_notifications","pid":$pid,"poll_url":"lock-status"}}}'
     return 0
+}
+
+# GET syslog — filtered log entries for diagnostics
+api_syslog() {
+    lines="${1:-100}"
+    log="$(logread 2>/dev/null | grep -i 'lpac-esim\|lpac\|modem\|ModemManager\|netifd.*modem\|qmi\|mbim\|usb.*1-1' | tail -n "$lines")"
+    "$JQ_BIN" -nc --arg log "$log" \
+        '{"type":"lpa","payload":{"code":0,"message":"success","data":{"log":$log}}}'
+}
+
+# POST soft-reset — QMI DMS offline+online (no USB re-enum)
+api_soft_reset() {
+    api_check_lock || return 1
+    if [ "$BACKEND" = "mbim" ] && [ -n "$MBIMCLI_BIN" ] && [ -e "$MBIM_DEVICE" ]; then
+        TERM=dumb "$MBIMCLI_BIN" -d "$MBIM_DEVICE" --set-radio-state=off >/dev/null 2>&1
+        sleep 2
+        TERM=dumb "$MBIMCLI_BIN" -d "$MBIM_DEVICE" --set-radio-state=on >/dev/null 2>&1
+        syslog_msg "API: Soft reset via MBIM radio toggle"
+        api_ok '{"method":"mbim_radio"}' "success"
+    elif [ -n "$QMICLI_BIN" ] && [ -n "$QMI_DEVICE" ] && [ -e "$QMI_DEVICE" ]; then
+        "$QMICLI_BIN" -d "$QMI_DEVICE" --device-open-proxy --dms-set-operating-mode=offline >/dev/null 2>&1
+        sleep 2
+        "$QMICLI_BIN" -d "$QMI_DEVICE" --device-open-proxy --dms-set-operating-mode=online >/dev/null 2>&1
+        syslog_msg "API: Soft reset via QMI DMS offline/online"
+        api_ok '{"method":"qmi_dms"}' "success"
+    elif [ -n "$AT_DEVICE" ] && [ -e "$AT_DEVICE" ]; then
+        printf "AT+CFUN=0\r" > "$AT_DEVICE" 2>/dev/null
+        sleep 2
+        printf "AT+CFUN=1\r" > "$AT_DEVICE" 2>/dev/null
+        syslog_msg "API: Soft reset via AT+CFUN=0/1"
+        api_ok '{"method":"at_cfun"}' "success"
+    else
+        api_err "no_device" "No suitable device for soft reset"
+    fi
+}
+
+# POST usb-reset — sysfs USB port re-enumeration (nuclear option)
+api_usb_reset() {
+    api_check_lock || return 1
+    dev="${QMI_DEVICE:-$MBIM_DEVICE}"
+    [ -z "$dev" ] && api_err "no_device" "No QMI/MBIM device configured" && return 1
+    base="${dev##*/}"
+    sys_path="/sys/class/usbmisc/$base/device/.."
+    real_path="$(readlink -f "$sys_path" 2>/dev/null)"
+    [ -z "$real_path" ] && real_path="$sys_path"
+    if [ -e "$real_path/authorized" ]; then
+        syslog_msg "API: USB port re-init via sysfs on $real_path"
+        echo 0 > "$real_path/authorized"
+        sleep 3
+        echo 1 > "$real_path/authorized"
+        api_ok '{"method":"usb_sysfs"}' "success"
+    else
+        api_err "sysfs_error" "Cannot find USB authorized path for $base"
+    fi
+}
+
+# POST uicc-reset — SIM power cycle via QMI UIM
+api_uicc_reset() {
+    api_check_lock || return 1
+    slot="${QMI_SLOT:-1}"
+    if [ -n "$QMICLI_BIN" ] && [ -n "$QMI_DEVICE" ] && [ -e "$QMI_DEVICE" ]; then
+        syslog_msg "API: UICC SIM reset (power cycle slot $slot)"
+        "$QMICLI_BIN" -d "$QMI_DEVICE" --device-open-proxy --uim-sim-power-off="$slot" >/dev/null 2>&1
+        sleep 2
+        "$QMICLI_BIN" -d "$QMI_DEVICE" --device-open-proxy --uim-sim-power-on="$slot" >/dev/null 2>&1
+        api_ok "{\"method\":\"qmi_uim\",\"slot\":$slot}" "success"
+    elif [ -n "$MBIMCLI_BIN" ] && [ -n "$MBIM_DEVICE" ] && [ -e "$MBIM_DEVICE" ]; then
+        syslog_msg "API: UICC SIM reset via MBIM"
+        TERM=dumb "$MBIMCLI_BIN" -d "$MBIM_DEVICE" --ms-set-uicc-reset=0 >/dev/null 2>&1
+        sleep 2
+        api_ok '{"method":"mbim_uicc"}' "success"
+    else
+        api_err "no_device" "No QMI/MBIM device for UICC reset"
+    fi
 }
 
 ###############################################################################
@@ -1075,7 +1153,11 @@ main() {
             download)     api_download ;;
             delete)       api_delete "$COMMAND_ARG" ;;
             nickname)     api_nickname "$COMMAND_ARG" ;;
-            *) api_err "unknown_command" "Unknown API command: '${COMMAND:-<empty>}'. Valid: profiles chip switch reboot-modem notif-list notif-clear notif-process modem-status lock-status download delete nickname" ;;
+            syslog)       api_syslog "$COMMAND_ARG" ;;
+            soft-reset)   api_soft_reset ;;
+            usb-reset)    api_usb_reset ;;
+            uicc-reset)   api_uicc_reset ;;
+            *) api_err "unknown_command" "Unknown API command: '${COMMAND:-<empty>}'." ;;
         esac
         return 0
     fi

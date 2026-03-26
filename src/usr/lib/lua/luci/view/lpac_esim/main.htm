@@ -33,6 +33,7 @@
             <li class="cbi-tab"><a href="#" onclick="return showTab('download-tab', this)"><%:Download Profile%></a></li>
             <li class="cbi-tab"><a href="#" onclick="return showTab('notifications-tab', this)"><%:Notifications%></a></li>
             <li class="cbi-tab"><a href="#" onclick="return showTab('config-tab', this)"><%:Configuration%></a></li>
+            <li class="cbi-tab"><a href="#" onclick="return showTab('diag-tab', this)"><%:Diagnostics%></a></li>
         </ul>
     </div>
 
@@ -55,6 +56,10 @@
 
         <div id="config-tab" class="cbi-tabcontent">
             <%+lpac_esim/config%>
+        </div>
+
+        <div id="diag-tab" class="cbi-tabcontent">
+            <%+lpac_esim/diagnostics%>
         </div>
     </div>
 </div>

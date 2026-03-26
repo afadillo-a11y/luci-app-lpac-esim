@@ -1,6 +1,7 @@
 /* lpac-esim.css — Styles for eSIM Manager LuCI app */
+/* Theme-safe: works with light, dark, and custom LuCI themes */
 
-/* ===== Tab styling ===== */
+/* ===== Tab styling — theme-safe ===== */
 .cbi-tabcontent {
     display: none;
 }
@@ -11,35 +12,37 @@
 .cbi-tabmenu ul {
     list-style: none;
     padding: 0;
-    margin: 0 0 15px 0;
+    margin: 0 0 20px 0;
     display: flex;
     flex-wrap: wrap;
-    border-bottom: 2px solid #ddd;
+    border-bottom: none;
+    gap: 4px;
 }
 .cbi-tabmenu li {
     margin: 0;
 }
 .cbi-tabmenu li a {
     display: block;
-    padding: 8px 16px;
+    padding: 8px 18px;
     text-decoration: none;
-    color: #555;
+    color: inherit;
+    opacity: 0.65;
     border: 1px solid transparent;
-    border-bottom: none;
-    margin-bottom: -2px;
-    border-radius: 4px 4px 0 0;
-    transition: background 0.2s, color 0.2s;
+    border-radius: 6px 6px 0 0;
+    transition: opacity 0.2s, background 0.2s;
+    font-size: 14px;
 }
 .cbi-tabmenu li a:hover {
-    background: #f5f5f5;
-    color: #333;
+    opacity: 0.85;
+    background: rgba(128, 128, 128, 0.1);
 }
 .cbi-tabmenu li.cbi-tab-active a {
-    background: #fff;
-    color: #0078d4;
-    border-color: #ddd;
-    border-bottom-color: #fff;
+    opacity: 1;
     font-weight: bold;
+    color: #0078d4;
+    border-color: rgba(128, 128, 128, 0.25);
+    border-bottom-color: transparent;
+    background: rgba(128, 128, 128, 0.05);
 }
 
 /* ===== Profile status badges ===== */
@@ -57,9 +60,10 @@
     border: 1px solid #c3e6cb;
 }
 .esim-badge-disabled {
-    background: #f8f9fa;
-    color: #6c757d;
-    border: 1px solid #dee2e6;
+    background: rgba(128, 128, 128, 0.15);
+    color: inherit;
+    opacity: 0.7;
+    border: 1px solid rgba(128, 128, 128, 0.25);
 }
 
 /* ===== Table responsive ===== */
@@ -75,23 +79,22 @@
 .cbi-section-table td {
     padding: 8px 12px;
     text-align: left;
-    border-bottom: 1px solid #eee;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.15);
     vertical-align: middle;
 }
 .cbi-section-table thead th {
-    background: #f8f9fa;
     font-weight: bold;
-    border-bottom: 2px solid #dee2e6;
+    border-bottom: 2px solid rgba(128, 128, 128, 0.3);
 }
 .cbi-section-table tr:hover {
-    background: #f5f8ff;
+    background: rgba(128, 128, 128, 0.05);
 }
 
-/* ===== Button spacing in action columns ===== */
+/* ===== Button spacing ===== */
 .cbi-page-custom-actions {
     margin-top: 15px;
     padding-top: 10px;
-    border-top: 1px solid #eee;
+    border-top: 1px solid rgba(128, 128, 128, 0.15);
 }
 .cbi-page-custom-actions .cbi-button {
     margin-right: 8px;
@@ -100,7 +103,7 @@
 /* ===== Fieldset sections ===== */
 fieldset.cbi-section {
     margin-bottom: 20px;
-    border: 1px solid #dee2e6;
+    border: 1px solid rgba(128, 128, 128, 0.2);
     border-radius: 4px;
     padding: 15px;
 }
@@ -126,10 +129,61 @@ fieldset.cbi-section legend {
 }
 .cbi-value-description {
     font-size: 0.85em;
-    color: #888;
+    opacity: 0.6;
     margin-top: 3px;
 }
 .cbi-input-text,
 .cbi-input-select {
     min-width: 250px;
+}
+
+/* ===== Terminal / Log viewer ===== */
+.esim-terminal {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    padding: 12px;
+    border-radius: 6px;
+    min-height: 200px;
+    max-height: 500px;
+    overflow-y: auto;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    border: 1px solid #333;
+}
+.esim-terminal::-webkit-scrollbar {
+    width: 8px;
+}
+.esim-terminal::-webkit-scrollbar-track {
+    background: #2d2d2d;
+}
+.esim-terminal::-webkit-scrollbar-thumb {
+    background: #555;
+    border-radius: 4px;
+}
+
+/* ===== Diagnostics action cards ===== */
+.esim-diag-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+}
+.esim-diag-card {
+    border: 1px solid rgba(128, 128, 128, 0.2);
+    border-radius: 6px;
+    padding: 14px;
+}
+.esim-diag-card strong {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 14px;
+}
+.esim-diag-card p {
+    font-size: 12px;
+    opacity: 0.65;
+    margin: 0 0 10px;
+    line-height: 1.4;
 }

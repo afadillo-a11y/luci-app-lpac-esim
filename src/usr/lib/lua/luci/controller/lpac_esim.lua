@@ -1,6 +1,6 @@
 -- /usr/lib/lua/luci/controller/lpac_esim.lua
 -- LuCI controller for eSIM management via lpac-esim-qmi backend
--- Version: 1.2.1
+-- Version: 1.2.2
 -- License: GPL-2.0
 --
 -- Architecture: integration adapter between browser (JS Fetch API) and backend script.
@@ -55,11 +55,17 @@ function index()
     entry({"admin", "modem", "lpac-esim", "notif_clear"},  call("api_notif_clear"),  nil).leaf = true
     entry({"admin", "modem", "lpac-esim", "save_config"},  call("api_save_config"),  nil).leaf = true
 
-    -- Stubs — MVP placeholders, to be implemented after base testing (Section 7 of TZ)
+    -- Download / Delete / Nickname / Notifications
     entry({"admin", "modem", "lpac-esim", "download"},      call("api_download"),      nil).leaf = true
     entry({"admin", "modem", "lpac-esim", "delete"},        call("api_delete"),        nil).leaf = true
     entry({"admin", "modem", "lpac-esim", "nickname"},      call("api_nickname"),      nil).leaf = true
     entry({"admin", "modem", "lpac-esim", "notif_process"}, call("api_notif_process"), nil).leaf = true
+
+    -- Diagnostics
+    entry({"admin", "modem", "lpac-esim", "syslog"},     call("api_syslog"),     nil).leaf = true
+    entry({"admin", "modem", "lpac-esim", "soft_reset"},  call("api_soft_reset"),  nil).leaf = true
+    entry({"admin", "modem", "lpac-esim", "usb_reset"},   call("api_usb_reset"),   nil).leaf = true
+    entry({"admin", "modem", "lpac-esim", "uicc_reset"},  call("api_uicc_reset"),  nil).leaf = true
 end
 
 -- ============================================================================
@@ -133,7 +139,13 @@ function exec_script(cmd, timeout)
     sys.exec("logger -t " .. util.shellquote(LOG_TAG) ..
         " " .. util.shellquote("Executing: " .. cmd))
 
-    return sys.exec(full_cmd)
+    -- Use io.popen instead of sys.exec for reliable stdout capture
+    -- (sys.exec loses output on some OpenWrt/LuCI builds)
+    local f = io.popen(full_cmd)
+    if not f then return nil end
+    local out = f:read("*a")
+    f:close()
+    return out
 end
 
 --- Parse lpac JSON from raw output.
@@ -470,6 +482,41 @@ function api_notif_process()
     if not require_post() then return end
 
     local raw  = exec_script("notif-process", 10)  -- backend launches async
+    local data = parse_lpac_json(raw)
+    send_json(data or make_error("backend_error", "No response from backend"))
+end
+
+-- ============================================================================
+-- Diagnostics
+-- ============================================================================
+
+--- GET: Filtered syslog (modem + lpac events)
+function api_syslog()
+    local raw  = exec_script("syslog", 10)
+    local data = parse_lpac_json(raw)
+    send_json(data or make_error("backend_error", "No response from backend"))
+end
+
+--- POST: Soft reset modem (QMI offline/online or AT+CFUN, no USB re-enum)
+function api_soft_reset()
+    if not require_post() then return end
+    local raw  = exec_script("soft-reset", 15)
+    local data = parse_lpac_json(raw)
+    send_json(data or make_error("backend_error", "No response from backend"))
+end
+
+--- POST: USB port re-initialization (sysfs authorized 0→1)
+function api_usb_reset()
+    if not require_post() then return end
+    local raw  = exec_script("usb-reset", 15)
+    local data = parse_lpac_json(raw)
+    send_json(data or make_error("backend_error", "No response from backend"))
+end
+
+--- POST: UICC SIM power cycle (QMI UIM power off/on)
+function api_uicc_reset()
+    if not require_post() then return end
+    local raw  = exec_script("uicc-reset", 15)
     local data = parse_lpac_json(raw)
     send_json(data or make_error("backend_error", "No response from backend"))
 end

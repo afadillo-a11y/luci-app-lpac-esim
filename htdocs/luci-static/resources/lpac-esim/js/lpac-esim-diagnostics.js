@@ -1,0 +1,130 @@
+/* lpac-esim-diagnostics.js — Syslog viewer + modem reset actions */
+'use strict';
+
+function loadSyslog() {
+    var logDiv = document.getElementById('diag-log');
+    if (!logDiv) return;
+    logDiv.textContent = 'Loading...';
+
+    apiGet('syslog')
+        .then(function(data) {
+            if (data && data.payload && data.payload.code === 0 && data.payload.data) {
+                var log = data.payload.data.log || '(empty log)';
+                logDiv.textContent = log;
+                logDiv.scrollTop = logDiv.scrollHeight;
+            } else {
+                logDiv.textContent = 'Failed to load log.';
+            }
+        })
+        .catch(function(e) {
+            logDiv.textContent = 'Error: ' + (e.message || 'network error');
+        });
+}
+
+function copyLog() {
+    var logDiv = document.getElementById('diag-log');
+    if (!logDiv) return;
+    var text = logDiv.textContent || '';
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function() {
+            showDiagResult('success', 'Log copied to clipboard.');
+        }).catch(function() {
+            fallbackCopy(text);
+        });
+    } else {
+        fallbackCopy(text);
+    }
+}
+
+function fallbackCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+        document.execCommand('copy');
+        showDiagResult('success', 'Log copied to clipboard.');
+    } catch (e) {
+        showDiagResult('error', 'Copy failed. Select log text manually.');
+    }
+    document.body.removeChild(ta);
+}
+
+function diagAction(endpoint, label) {
+    if (!confirm('Execute ' + label + '?\n\nThis will affect modem connectivity.')) return;
+
+    showDiagResult('info', label + ' in progress...');
+    appendToLog('[' + new Date().toLocaleTimeString() + '] >>> ' + label + ' requested');
+
+    var promise;
+    if (endpoint === 'reboot_modem') {
+        promise = apiPost(endpoint, {});
+    } else {
+        promise = apiPost(endpoint, {});
+    }
+
+    promise.then(function(data) {
+        if (data && data.payload) {
+            if (data.payload.code === 0) {
+                var method = '';
+                if (data.payload.data && data.payload.data.method) {
+                    method = ' (via ' + data.payload.data.method + ')';
+                }
+                if (data.payload.message === 'processing') {
+                    showDiagResult('info', label + ' initiated. Modem is rebooting...');
+                    appendToLog('[' + new Date().toLocaleTimeString() + '] ' + label + ' launched in background');
+                    startLockPolling(function(result) {
+                        if (result && result.success) {
+                            showDiagResult('success', result.message || label + ' completed.');
+                        } else if (result && !result.success) {
+                            showDiagResult('error', result.message || label + ' failed.');
+                        } else {
+                            showDiagResult('success', label + ' completed.');
+                        }
+                        appendToLog('[' + new Date().toLocaleTimeString() + '] ' + label + ' finished');
+                        setTimeout(loadSyslog, 2000);
+                    });
+                } else {
+                    showDiagResult('success', label + ' completed' + method + '.');
+                    appendToLog('[' + new Date().toLocaleTimeString() + '] ' + label + ' OK' + method);
+                    setTimeout(loadSyslog, 2000);
+                }
+            } else {
+                var msg = data.payload.message || 'failed';
+                if (data.payload.data && data.payload.data.msg) msg += ': ' + data.payload.data.msg;
+                showDiagResult('error', label + ' failed: ' + msg);
+                appendToLog('[' + new Date().toLocaleTimeString() + '] ' + label + ' FAILED: ' + msg);
+            }
+        }
+    })
+    .catch(function(e) {
+        showDiagResult('error', label + ' error: ' + (e.message || 'network error'));
+        appendToLog('[' + new Date().toLocaleTimeString() + '] ' + label + ' ERROR: ' + (e.message || 'network'));
+    });
+}
+
+function appendToLog(line) {
+    var logDiv = document.getElementById('diag-log');
+    if (!logDiv) return;
+    logDiv.textContent += '\n' + line;
+    logDiv.scrollTop = logDiv.scrollHeight;
+}
+
+function showDiagResult(type, msg) {
+    var el = document.getElementById('diag-result');
+    if (!el) return;
+    el.style.display = 'block';
+    el.textContent = msg;
+    if (type === 'success') {
+        el.style.background = '#d4edda'; el.style.color = '#155724'; el.style.borderColor = '#c3e6cb';
+    } else if (type === 'error') {
+        el.style.background = '#f8d7da'; el.style.color = '#721c24'; el.style.borderColor = '#f5c6cb';
+    } else {
+        el.style.background = '#d1ecf1'; el.style.color = '#0c5460'; el.style.borderColor = '#bee5eb';
+    }
+    el.style.border = '1px solid';
+}
+
+// Loaded by showTab() on first tab activation
