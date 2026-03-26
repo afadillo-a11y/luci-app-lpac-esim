@@ -24,40 +24,33 @@ depends:
   - coreutils-timeout
 
 contents:
-  # LuCI Lua files
   - src: ./pkgroot/usr/lib/lua/luci/
     dst: /usr/lib/lua/luci
     type: tree
 
-  # LuCI static resources
   - src: ./pkgroot/www/luci-static/resources/
     dst: /www/luci-static/resources
     type: tree
 
-  # LuCI menu definitions
   - src: ./pkgroot/usr/share/luci/menu.d/
     dst: /usr/share/luci/menu.d
     type: tree
 
-  # rpcd ACLs
   - src: ./pkgroot/usr/share/rpcd/acl.d/
     dst: /usr/share/rpcd/acl.d
     type: tree
 
-  # UCI config
   - src: ./pkgroot/etc/config/lpac-esim
     dst: /etc/config/lpac-esim
     type: "config|noreplace"
     file_info:
       mode: 0644
 
-  # Shell backend
   - src: ./pkgroot/usr/bin/lpac-esim-qmi
     dst: /usr/bin/lpac-esim-qmi
     file_info:
       mode: 0755
 
-  # Wrapper expected by backend
   - src: ./pkgroot/usr/bin/lpac
     dst: /usr/bin/lpac
     file_info:
@@ -66,11 +59,6 @@ contents:
 scripts:
   postinstall: ./scripts/postinst
   preremove: ./scripts/prerm
-
-overrides:
-  ipk:
-    fields:
-      Architecture: all
 
 apk:
   arch: "noarch"
