@@ -1,188 +1,216 @@
-# .github/workflows/import_build_from_zip.yml — v1.3.0
-# Imports a development ZIP into the repository source tree layout.
-# Run manually: Actions → import-from-zip → Run workflow
+# .github/workflows/build.yml — luci-app-lpac-manager v1.3.0
+# Unified build: lpac wrapper + lpac-esim backend + LuCI WebUI → IPK + APK
 #
 # Changelog:
-#   1.3.0 - Updated defaults for luci-app-lpac-manager naming
+#   1.3.0 - Renamed: package → luci-app-lpac-manager, script → lpac-esim
+#           Tag trigger v*, wrapper rename lpac-wrapper.sh → lpac
+#   1.2.2 - Initial build workflow
 
-name: import-from-zip
+name: Build and Release luci-app-lpac-manager
 
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
-      zip_path:
-        description: "Path to zip inside the repository"
+      build_target:
+        description: 'Package version (e.g. 1.3.0)'
         required: true
-        default: "_incoming/luci-app-lpac-manager-v1.3.0.zip"
-      source_root:
-        description: "Root folder name inside the zip"
-        required: true
-        default: "luci-app-lpac-esim"
-      commit_message:
-        description: "Commit message"
-        required: true
-        default: "Import luci-app-lpac-manager v1.3.0 from ZIP"
-
-permissions:
-  contents: write
+        default: '1.3.0'
 
 jobs:
-  import:
+  release:
+    name: Build and Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      PKG_NAME: luci-app-lpac-manager
 
     steps:
-      - name: Checkout
+      - name: Extract version
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.build_target }}" >> "$GITHUB_ENV"
+          elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=nightly" >> "$GITHUB_ENV"
+          fi
+
+      - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Install nFPM and helpers
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y dos2unix curl tar jq rsync file
+
+          NFPM_TAG="$(curl -sL https://api.github.com/repos/goreleaser/nfpm/releases/latest | jq -r .tag_name)"
+          NFPM_VER="${NFPM_TAG#v}"
+          echo "Installing nFPM ${NFPM_VER}"
+          curl -fsSL \
+            "https://github.com/goreleaser/nfpm/releases/download/${NFPM_TAG}/nfpm_${NFPM_VER}_Linux_x86_64.tar.gz" \
+            | tar -xz nfpm
+          sudo install -m 0755 nfpm /usr/local/bin/nfpm
+          nfpm --version
+
+      - name: Assemble pkgroot from source tree
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          REPO_ROOT="${GITHUB_WORKSPACE}"
+          PKGROOT="${GITHUB_WORKSPACE}/pkgroot"
+
+          # Validate source layout
+          test -d "${REPO_ROOT}/src/usr/lib/lua/luci"
+          test -d "${REPO_ROOT}/htdocs"
+          test -d "${REPO_ROOT}/etc/config"
+          test -f "${REPO_ROOT}/nfpm.yaml"
+
+          rm -rf "${PKGROOT}"
+          mkdir -p "${PKGROOT}"
+
+          # 1) Lua controller + views
+          mkdir -p "${PKGROOT}/usr/lib/lua/luci"
+          rsync -a "${REPO_ROOT}/src/usr/lib/lua/luci/" "${PKGROOT}/usr/lib/lua/luci/"
+
+          # 2) Backend shell scripts (lpac-esim + lpac wrapper)
+          if [ -d "${REPO_ROOT}/src/usr/bin" ]; then
+            mkdir -p "${PKGROOT}/usr/bin"
+            rsync -a "${REPO_ROOT}/src/usr/bin/" "${PKGROOT}/usr/bin/"
+            find "${PKGROOT}/usr/bin" -type f -exec chmod 0755 {} \;
+          fi
+
+          # 3) Static web resources (JS, CSS)
+          if [ -d "${REPO_ROOT}/htdocs/luci-static/resources" ]; then
+            mkdir -p "${PKGROOT}/www/luci-static/resources"
+            rsync -a "${REPO_ROOT}/htdocs/luci-static/resources/" "${PKGROOT}/www/luci-static/resources/"
+          fi
+
+          # 4) Root overlay (menu.d, acl.d)
+          if [ -d "${REPO_ROOT}/root" ]; then
+            rsync -a "${REPO_ROOT}/root/" "${PKGROOT}/"
+          fi
+
+          # 5) Normalize legacy menu path
+          mkdir -p "${PKGROOT}/usr/share/luci/menu.d"
+          if [ -d "${PKGROOT}/usr/share/menu.d" ]; then
+            rsync -a "${PKGROOT}/usr/share/menu.d/" "${PKGROOT}/usr/share/luci/menu.d/"
+            rm -rf "${PKGROOT}/usr/share/menu.d"
+          fi
+
+          # 6) UCI config
+          mkdir -p "${PKGROOT}/etc/config"
+          if [ -f "${REPO_ROOT}/etc/config/lpac-esim" ]; then
+            cp "${REPO_ROOT}/etc/config/lpac-esim" "${PKGROOT}/etc/config/lpac-esim"
+          fi
+
+          # 7) Rename wrapper lpac-wrapper.sh → lpac (if not already)
+          if [ -f "${PKGROOT}/usr/bin/lpac-wrapper.sh" ] && [ ! -f "${PKGROOT}/usr/bin/lpac" ]; then
+            mv "${PKGROOT}/usr/bin/lpac-wrapper.sh" "${PKGROOT}/usr/bin/lpac"
+            chmod 0755 "${PKGROOT}/usr/bin/lpac"
+          fi
+
+          # 8) Normalize line endings
+          find "${PKGROOT}" -type f \( \
+            -name '*.lua' -o -name '*.js' -o -name '*.json' -o -name '*.htm' \
+            -o -name '*.css' -o -path '*/etc/config/*' -o -path '*/usr/bin/*' \
+          \) -print0 | xargs -0 -r dos2unix
+
+          # 9) Strip UTF-8 BOM
+          find "${PKGROOT}" -type f \( \
+            -name '*.lua' -o -name '*.js' -o -name '*.htm' -o -path '*/usr/bin/*' \
+          \) -print0 | xargs -0 -r sed -i '1s/^\xef\xbb\xbf//'
+
+          # 10) Sanity checks
+          echo "=== pkgroot contents ==="
+          find "${PKGROOT}" -maxdepth 8 -type f | sort
+
+          test -f "${PKGROOT}/etc/config/lpac-esim"
+          test -f "${PKGROOT}/usr/lib/lua/luci/controller/lpac_esim.lua"
+          test -d "${PKGROOT}/www/luci-static/resources/lpac-esim"
+          test -f "${PKGROOT}/usr/share/luci/menu.d/luci-app-lpac-esim.json"
+          test -f "${PKGROOT}/usr/share/rpcd/acl.d/luci-app-lpac-esim.json"
+          test -f "${PKGROOT}/usr/bin/lpac-esim"
+          test -f "${PKGROOT}/usr/bin/lpac"
+          echo "All sanity checks passed."
+
+      - name: Build IPK and APK packages
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          export PKG_VER="${{ env.VERSION }}"
+          export SOURCE_DATE_EPOCH=1704067200
+
+          nfpm package \
+            --config nfpm.yaml \
+            --packager ipk \
+            --target "${PKG_NAME}_${PKG_VER}_all.ipk"
+          echo "Built: ${PKG_NAME}_${PKG_VER}_all.ipk"
+
+          unset SOURCE_DATE_EPOCH
+          nfpm package \
+            --config nfpm.yaml \
+            --packager apk \
+            --target "${PKG_NAME}_${PKG_VER}_all.apk"
+          echo "Built: ${PKG_NAME}_${PKG_VER}_all.apk"
+
+          ls -lh "${PKG_NAME}"_*
+          sha256sum "${PKG_NAME}"_* || true
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
         with:
-          fetch-depth: 0
+          name: ${{ env.PKG_NAME }}-${{ env.VERSION }}
+          path: |
+            *.ipk
+            *.apk
 
-      - name: Validate zip exists
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ ! -f "${{ inputs.zip_path }}" ]; then
-            echo "ERROR: zip not found at '${{ inputs.zip_path }}'"
-            echo "Available files in _incoming/:"
-            ls -la _incoming/ 2>/dev/null || echo "  (_incoming/ does not exist)"
-            exit 1
-          fi
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        with:
+          files: |
+            *.ipk
+            *.apk
+          name: "Release ${{ env.VERSION }}"
+          tag_name: "v${{ env.VERSION }}"
+          prerelease: false
+          draft: false
+          body: |
+            ## luci-app-lpac-manager ${{ env.VERSION }}
 
-      - name: Unpack zip
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf _workzip
-          mkdir -p _workzip
-          unzip -q "${{ inputs.zip_path }}" -d _workzip
-          echo "=== ZIP contents (top 2 levels) ==="
-          find _workzip -maxdepth 2 -type f | sort | head -30
+            Unified eSIM management package for OpenWrt.
+            **Architecture: all** — works on any OpenWrt target.
 
-      - name: Detect source root
-        id: detect
-        shell: bash
-        run: |
-          set -euo pipefail
+            ### Includes
+            - `/usr/bin/lpac` — environment wrapper for lpac binary
+            - `/usr/bin/lpac-esim` — backend script (interactive + API mode)
+            - LuCI web UI at **Modem → eSIM Manager**
 
-          if [ -d "_workzip/${{ inputs.source_root }}" ]; then
-            echo "src=_workzip/${{ inputs.source_root }}" >> "$GITHUB_OUTPUT"
-            echo "Found exact match: _workzip/${{ inputs.source_root }}"
-            exit 0
-          fi
+            ### Features
+            - Profile list / switch / download / delete / rename
+            - QMI, AT, and MBIM backend support
+            - Diagnostics: syslog viewer, soft/USB/SIM/hard reset
+            - Async operations with real success/error reporting
 
-          first_dir="$(find _workzip -mindepth 1 -maxdepth 1 -type d | head -n 1 || true)"
-          if [ -n "$first_dir" ]; then
-            echo "src=$first_dir" >> "$GITHUB_OUTPUT"
-            echo "Using first directory: $first_dir"
-            exit 0
-          fi
+            ### Dependencies (separate packages)
+            - `luci-base`, `jq`
+            - `lpac` 2.3.0+ (arch-specific)
+            - QMI: `libqmi`, `qmi-utils`
+            - MBIM: `libmbim`, `mbim-utils` (optional)
 
-          echo "ERROR: Cannot detect source root inside zip"
-          exit 1
-
-      - name: Validate expected zip layout
-        shell: bash
-        run: |
-          set -euo pipefail
-          SRC="${{ steps.detect.outputs.src }}"
-
-          test -d "$SRC/htdocs"
-          test -d "$SRC/src/usr/lib/lua/luci"
-          test -d "$SRC/etc/config"
-          test -f "$SRC/nfpm.yaml"
-
-          echo "ZIP layout validated OK"
-          echo "=== Source tree ==="
-          find "$SRC" -maxdepth 3 -type f | sort | head -40
-
-      - name: Create target directories
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p htdocs
-          mkdir -p src/usr/bin
-          mkdir -p src/usr/lib/lua/luci
-          mkdir -p etc/config
-          mkdir -p root/usr/share/luci/menu.d
-          mkdir -p root/usr/share/rpcd/acl.d
-          mkdir -p scripts
-
-      - name: Import files preserving repo layout
-        shell: bash
-        run: |
-          set -euo pipefail
-          SRC="${{ steps.detect.outputs.src }}"
-
-          # Clean only the parts we're importing
-          rm -rf htdocs/*
-          rm -rf src/usr/*
-          rm -rf etc/config/*
-          rm -rf root/usr/share/luci/menu.d/*
-          rm -rf root/usr/share/rpcd/acl.d/*
-          rm -rf scripts/*
-
-          # Copy each component
-          cp -a "$SRC/htdocs/." htdocs/
-          cp -a "$SRC/src/usr/." src/usr/
-          cp -a "$SRC/etc/config/." etc/config/
-
-          if [ -d "$SRC/root/usr/share/luci/menu.d" ]; then
-            cp -a "$SRC/root/usr/share/luci/menu.d/." root/usr/share/luci/menu.d/
-          fi
-
-          if [ -d "$SRC/root/usr/share/rpcd/acl.d" ]; then
-            cp -a "$SRC/root/usr/share/rpcd/acl.d/." root/usr/share/rpcd/acl.d/
-          fi
-
-          if [ -d "$SRC/scripts" ]; then
-            cp -a "$SRC/scripts/." scripts/
-          fi
-
-          # nfpm config
-          cp -a "$SRC/nfpm.yaml" nfpm.yaml
-
-          # Do NOT overwrite .github/workflows — those are managed separately
-
-      - name: Normalize permissions
-        shell: bash
-        run: |
-          set -euo pipefail
-          find src/usr/bin -type f -exec chmod +x {} \; 2>/dev/null || true
-          find scripts -type f -exec chmod +x {} \; 2>/dev/null || true
-
-      - name: Post-import validation
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "=== Imported files ==="
-          find src htdocs etc root scripts -type f | sort
-          echo ""
-          echo "=== Key files check ==="
-          test -f src/usr/bin/lpac-esim && echo "OK: lpac-esim backend" || echo "WARN: lpac-esim not found"
-          test -f src/usr/bin/lpac-wrapper.sh && echo "OK: lpac-wrapper.sh" || echo "WARN: wrapper not found"
-          test -f src/usr/lib/lua/luci/controller/lpac_esim.lua && echo "OK: Lua controller" || echo "WARN: controller not found"
-          test -f nfpm.yaml && echo "OK: nfpm.yaml" || echo "WARN: nfpm.yaml not found"
-
-      - name: Show git diff summary
-        shell: bash
-        run: |
-          set -euo pipefail
-          git status --short
-          git diff --stat
-
-      - name: Commit and push changes
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add htdocs src etc root scripts nfpm.yaml
-
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-            exit 0
-          fi
-
-          git commit -m "${{ inputs.commit_message }}"
-          git push
+            ### Install
+            ```sh
+            opkg install luci-app-lpac-manager_${{ env.VERSION }}_all.ipk
+            # or OpenWrt 24+
+            apk add --allow-untrusted luci-app-lpac-manager_${{ env.VERSION }}_all.apk
+            ```
