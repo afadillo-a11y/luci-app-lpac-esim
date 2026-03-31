@@ -1,4 +1,14 @@
-<!-- /usr/lib/lua/luci/view/lpac_esim/diagnostics.htm — v1.3.0 -->
+<!-- /usr/lib/lua/luci/view/lpac_esim/diagnostics.htm — v1.3.2 -->
+
+<fieldset class="cbi-section">
+    <legend><%:System Check%></legend>
+    <div class="cbi-section-node">
+        <div id="diag-runlog" class="esim-terminal" style="min-height: 120px; max-height: 250px;"><%:Loading...%></div>
+        <div style="margin-top: 10px;">
+            <input type="button" class="cbi-button" value="<%:Refresh Check%>" onclick="loadRunlog()" />
+        </div>
+    </div>
+</fieldset>
 
 <fieldset class="cbi-section">
     <legend><%:System Log%></legend>

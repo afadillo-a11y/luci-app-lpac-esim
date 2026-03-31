@@ -1,5 +1,20 @@
-/* lpac-esim-diagnostics.js — v1.3.0 */
+/* lpac-esim-diagnostics.js — v1.3.2 */
 'use strict';
+
+function loadRunlog() {
+    var el = document.getElementById('diag-runlog');
+    if (!el) return;
+    el.textContent = 'Loading system check...';
+    apiGet('runlog')
+        .then(function(data) {
+            if (data && data.payload && data.payload.code === 0 && data.payload.data) {
+                el.textContent = data.payload.data.log || '(empty — run lpac-esim once to generate)';
+            } else {
+                el.textContent = 'Failed to load system check.';
+            }
+        })
+        .catch(function(e) { el.textContent = 'Error: ' + (e.message || 'network'); });
+}
 
 function loadSyslog() {
     var logDiv = document.getElementById('diag-log');

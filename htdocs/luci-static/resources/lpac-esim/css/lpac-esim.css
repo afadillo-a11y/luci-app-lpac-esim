@@ -1,4 +1,4 @@
-/* lpac-esim.css — v1.3.0
+/* lpac-esim.css — v1.3.2
  * Theme-safe styles for eSIM Manager LuCI app.
  * Works with light, dark, and custom OpenWrt themes.
  * Changelog:
@@ -12,42 +12,68 @@
 .cbi-tabcontent-active,
 .cbi-tabcontent.cbi-tabcontent-active { display: block !important; }
 
+/* Override routerich theme gradient that draws gray line under tabs */
+.cbi-tabmenu {
+    background: none !important;
+    background-image: none !important;
+}
 .cbi-tabmenu ul {
     list-style: none;
     padding: 0;
     margin: 0 0 20px 0;
     display: flex;
     flex-wrap: wrap;
-    gap: 2px;
+    gap: 3px;
     border-bottom: none !important;
     background: none !important;
+    background-image: none !important;
 }
 .cbi-tabmenu li { margin: 0; }
 .cbi-tabmenu li a {
     display: block;
     padding: 10px 20px;
-    text-decoration: none;
+    text-decoration: none !important;
     font-size: 14px;
-    font-weight: 500;
-    color: #4a7aab;
-    background: rgba(74, 122, 171, 0.08);
-    border: 2px solid rgba(74, 122, 171, 0.15);
+    font-weight: 600;
+    color: #2563eb;
+    background: rgba(37, 99, 235, 0.06);
+    border: 2px solid rgba(37, 99, 235, 0.2);
     border-radius: 8px 8px 0 0;
     border-bottom: 2px solid transparent;
-    transition: all 0.2s ease;
+    transition: all 0.15s ease;
 }
 .cbi-tabmenu li a:hover {
-    color: #2d6da3;
-    background: rgba(74, 122, 171, 0.15);
-    border-color: rgba(74, 122, 171, 0.3);
+    color: #1d4ed8;
+    background: rgba(37, 99, 235, 0.12);
+    border-color: rgba(37, 99, 235, 0.35);
     border-bottom-color: transparent;
 }
 .cbi-tabmenu li.cbi-tab-active a {
     color: #fff !important;
-    background: #3a7bd5 !important;
-    border-color: #3a7bd5 !important;
+    background: #2563eb !important;
+    border-color: #2563eb !important;
     border-bottom-color: transparent !important;
     font-weight: 700;
+    box-shadow: 0 -2px 8px rgba(37, 99, 235, 0.25);
+}
+
+/* Dark theme support — higher contrast inactive tabs */
+@media (prefers-color-scheme: dark) {
+    .cbi-tabmenu li a {
+        color: #60a5fa;
+        background: rgba(96, 165, 250, 0.1);
+        border-color: rgba(96, 165, 250, 0.25);
+    }
+    .cbi-tabmenu li a:hover {
+        color: #93bbfc;
+        background: rgba(96, 165, 250, 0.18);
+        border-color: rgba(96, 165, 250, 0.4);
+    }
+    .cbi-tabmenu li.cbi-tab-active a {
+        color: #fff !important;
+        background: #3b82f6 !important;
+        border-color: #3b82f6 !important;
+    }
 }
 
 /* ===== Profile status badges ===== */

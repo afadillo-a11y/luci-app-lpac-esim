@@ -1,5 +1,5 @@
 # nfpm.yaml — luci-app-lpac-manager v1.3.0
-# Unified: lpac wrapper + lpac-esim backend + LuCI WebUI
+# Unified: lpac-esim backend + LuCI WebUI
 # Architecture: noarch/all — pure shell + Lua + HTML + JS
 #
 # Changelog:
@@ -19,8 +19,8 @@ description: |
   LuCI WebUI and shell backend for eSIM profile management on OpenWrt.
   Includes:
     - LuCI frontend (eSIM Manager)
-    - lpac-esim shell backend (QMI / AT / MBIM)
-    - /usr/bin/lpac wrapper script
+    - lpac-esim backend script (QMI / AT / MBIM)
+
   Requires separate: lpac 2.3.0+, modem transport utilities
 
 depends:
@@ -54,12 +54,6 @@ contents:
     dst: /usr/bin/lpac-esim
     file_info:
       mode: 0755
-
-  - src: ./pkgroot/usr/bin/lpac
-    dst: /usr/bin/lpac
-    file_info:
-      mode: 0755
-
 scripts:
   postinstall: ./scripts/postinst
   preremove: ./scripts/prerm

@@ -1,12 +1,11 @@
 -- /usr/lib/lua/luci/controller/lpac_esim.lua
 -- LuCI controller for eSIM management via lpac-esim backend
--- Version: 1.3.0
+-- Version: 1.3.2
 -- License: GPL-2.0
 --
 -- Changelog:
 --   1.3.0 - Diagnostics tab (syslog, soft/usb/uicc reset), io.popen fix,
---           theme-safe CSS, adaptive reset descriptions, MBIM config text fix,
---           unified nfpm build (wrapper + backend + luci in one package)
+--           theme-safe CSS, adaptive reset descriptions, MBIM config text fix
 --   1.2.2 - ANSI/jq/async fixes, diagnostics APIs
 --   1.2.1 - async_finish result model, valid_iccid helper, LPA regex loosened
 --   1.2.0 - download/delete/nickname/notif_process, full MBIM support
@@ -72,6 +71,8 @@ function index()
 
     -- Diagnostics
     entry({"admin", "modem", "lpac-esim", "syslog"},     call("api_syslog"),     nil).leaf = true
+    entry({"admin", "modem", "lpac-esim", "runlog"},     call("api_runlog"),     nil).leaf = true
+    entry({"admin", "modem", "lpac-esim", "version"},    call("api_version"),    nil).leaf = true
     entry({"admin", "modem", "lpac-esim", "soft_reset"},  call("api_soft_reset"),  nil).leaf = true
     entry({"admin", "modem", "lpac-esim", "usb_reset"},   call("api_usb_reset"),   nil).leaf = true
     entry({"admin", "modem", "lpac-esim", "uicc_reset"},  call("api_uicc_reset"),  nil).leaf = true
@@ -103,8 +104,9 @@ end
 -- Builds CLI flags from UCI config. Single sys.exec() call (no os.execute dupe).
 -- @param cmd       string  sub-command to pass (e.g. "profiles", "switch <ICCID>")
 -- @param timeout   number  max seconds (default 30)
+-- @param silent    boolean if true, don't log to syslog (for read-only queries like syslog)
 -- @return string|nil       raw stdout from script
-function exec_script(cmd, timeout)
+function exec_script(cmd, timeout, silent)
     local config = read_config()
 
     local backend  = config.apdu_backend
@@ -136,20 +138,29 @@ function exec_script(cmd, timeout)
     -- Ensure run directory exists
     sys.exec("mkdir -p " .. RUN_DIR)
 
-    local full_cmd = string.format(
-        "timeout %d %s %s %s 2>%s",
-        t,
-        BACKEND_SCRIPT,
-        flags,
-        cmd,
-        RUN_LOG
-    )
+    -- Build command: use timeout if available, fallback to direct exec
+    local timeout_bin = sys.exec("command -v timeout 2>/dev/null"):gsub("%s+$", "")
+    local full_cmd
+    if timeout_bin ~= "" then
+        full_cmd = string.format("%s %d %s %s %s 2>>%s",
+            timeout_bin, t, BACKEND_SCRIPT, flags, cmd, RUN_LOG)
+    else
+        full_cmd = string.format("%s %s %s 2>>%s",
+            BACKEND_SCRIPT, flags, cmd, RUN_LOG)
+    end
 
-    sys.exec("logger -t " .. util.shellquote(LOG_TAG) ..
-        " " .. util.shellquote("Executing: " .. cmd))
+    -- Log only real operations, not read-only queries
+    if not silent then
+        local dev = ""
+        if backend == "qmi" then dev = config.qmi_device or ""
+        elseif backend == "mbim" then dev = config.mbim_device or ""
+        elseif backend == "at" then dev = at_dev or ""
+        end
+        sys.exec("logger -t " .. util.shellquote(LOG_TAG) ..
+            " " .. util.shellquote("[" .. backend:upper() .. " " .. dev .. "] " .. cmd))
+    end
 
     -- Use io.popen instead of sys.exec for reliable stdout capture
-    -- (sys.exec loses output on some OpenWrt/LuCI builds)
     local f = io.popen(full_cmd)
     if not f then return nil end
     local out = f:read("*a")
@@ -227,31 +238,31 @@ end
 -- Differences: command name and timeout.
 
 function api_profiles()
-    local raw  = exec_script("profiles", 20)
+    local raw  = exec_script("profiles", 20, true)
     local data = parse_lpac_json(raw)
     send_json(data or make_error("parse_error", "Empty or invalid response from backend"))
 end
 
 function api_chip()
-    local raw  = exec_script("chip", 10)
+    local raw  = exec_script("chip", 10, true)
     local data = parse_lpac_json(raw)
     send_json(data or make_error("parse_error", "Empty or invalid response from backend"))
 end
 
 function api_modem_status()
-    local raw  = exec_script("modem-status", 10)
+    local raw  = exec_script("modem-status", 10, true)
     local data = parse_lpac_json(raw)
     send_json(data or make_error("parse_error", "Empty or invalid response from backend"))
 end
 
 function api_notif_list()
-    local raw  = exec_script("notif-list", 15)
+    local raw  = exec_script("notif-list", 15, true)
     local data = parse_lpac_json(raw)
     send_json(data or make_error("parse_error", "Empty or invalid response from backend"))
 end
 
 function api_lock_status()
-    local raw  = exec_script("lock-status", 5)
+    local raw  = exec_script("lock-status", 5, true)  -- silent: polling, don't spam log
     local data = parse_lpac_json(raw)
     send_json(data or make_error("parse_error", "Empty or invalid response from backend"))
 end
@@ -501,7 +512,21 @@ end
 
 --- GET: Filtered syslog (modem + lpac events)
 function api_syslog()
-    local raw  = exec_script("syslog", 10)
+    local raw  = exec_script("syslog", 10, true)  -- silent: don't log reads
+    local data = parse_lpac_json(raw)
+    send_json(data or make_error("backend_error", "No response from backend"))
+end
+
+--- GET: Backend initialization log (run.log contents)
+function api_runlog()
+    local raw  = exec_script("runlog", 5, true)  -- silent
+    local data = parse_lpac_json(raw)
+    send_json(data or make_error("backend_error", "No response from backend"))
+end
+
+--- GET: Package and component versions
+function api_version()
+    local raw  = exec_script("version", 5, true)  -- silent
     local data = parse_lpac_json(raw)
     send_json(data or make_error("backend_error", "No response from backend"))
 end

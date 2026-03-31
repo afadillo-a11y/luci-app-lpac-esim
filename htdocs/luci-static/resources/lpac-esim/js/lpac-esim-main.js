@@ -1,4 +1,4 @@
-/* lpac-esim-main.js — v1.3.0 */
+/* lpac-esim-main.js — v1.3.2 */
 'use strict';
 
 var BASE_URL = L.env.scriptname + '/admin/modem/lpac-esim/';
@@ -34,7 +34,7 @@ function showTab(tabId, el) {
             case 'profiles-tab':      if (typeof loadProfiles === 'function') loadProfiles(); break;
             case 'notifications-tab': if (typeof loadNotifications === 'function') loadNotifications(); break;
             case 'config-tab':        if (typeof loadConfig === 'function') loadConfig(); break;
-            case 'diag-tab':          if (typeof loadSyslog === 'function') loadSyslog(); break;
+            case 'diag-tab':          if (typeof loadRunlog === 'function') loadRunlog(); if (typeof loadSyslog === 'function') loadSyslog(); break;
         }
     }
     return false;
@@ -143,6 +143,14 @@ function apiGet(endpoint) {
 /* ===== Init ===== */
 document.addEventListener('DOMContentLoaded', function() {
     checkConnectivity();
+    /* Fetch and display version */
+    apiGet('version').then(function(data) {
+        if (data && data.payload && data.payload.data) {
+            var v = data.payload.data;
+            var el = document.getElementById('esim-app-version');
+            if (el) el.textContent = 'v' + (v.script_version || '?') + ' / lpac ' + (v.lpac_version || '?') + ' / ' + (v.backend || '?').toUpperCase();
+        }
+    }).catch(function() {});
     /* Activate first tab — triggers lazy load for Info only */
     var firstTab = document.querySelector('.cbi-tabmenu li a');
     if (firstTab) firstTab.click();
