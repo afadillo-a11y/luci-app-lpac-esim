@@ -1,4 +1,4 @@
-/* lpac-esim-profiles.js — v1.3.2 */
+/* lpac-esim-profiles.js — v1.3.3 */
 'use strict';
 
 function loadProfiles() {
