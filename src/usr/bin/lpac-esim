@@ -1055,44 +1055,27 @@ api_at_cmd() {
     local port="$AT_DEVICE"
     [ -z "$port" ] && port="$(uci_get_default at_device '/dev/ttyUSB3')"
     if [ ! -c "$port" ]; then
-        api_err "no_device" "AT device $port not found"
+        api_err "no_device" "AT device $port not found. Check Device Settings or run: ls /dev/ttyUSB*"
         return 1
     fi
 
     # Sanitize command — allow only printable ASCII, strip dangerous chars
     cmd="$(printf '%s' "$cmd" | tr -d '\000-\010\013\014\016-\037\177' | head -c 200)"
 
-    local resp="" tmpfile="${TMP_DIR}/at_resp.tmp"
+    local resp=""
 
-    # Method 1: Try microcom if available (best for serial)
-    if command -v microcom >/dev/null 2>&1; then
-        resp="$(printf '%s\r\n' "$cmd" | microcom -t 3000 "$port" 2>/dev/null)"
+    # Primary method: atinout (reliable, no port conflicts)
+    if command -v atinout >/dev/null 2>&1; then
+        resp="$(echo "$cmd" | atinout - "$port" - 2>&1)"
     else
-        # Method 2: Raw shell — works without stty/microcom
-        # Set port speed via shell escape if stty available, otherwise skip
-        command -v stty >/dev/null 2>&1 && stty -F "$port" 115200 raw -echo 2>/dev/null
-
-        : > "$tmpfile"
-        # Background reader
-        cat < "$port" > "$tmpfile" 2>/dev/null &
-        local reader_pid=$!
-
-        # Small delay for reader to attach
-        sleep 0.2
-
-        # Send command
-        printf '%s\r' "$cmd" > "$port" 2>/dev/null
-
-        # Wait for response
-        sleep 2
-
-        # Kill reader
-        kill "$reader_pid" 2>/dev/null
-        kill -9 "$reader_pid" 2>/dev/null
-        wait "$reader_pid" 2>/dev/null
-
-        resp="$(cat "$tmpfile" 2>/dev/null)"
-        rm -f "$tmpfile"
+        # Fallback: direct echo/cat (less reliable on MBIM modems)
+        # Try microcom first
+        if command -v microcom >/dev/null 2>&1; then
+            resp="$(printf '%s\r\n' "$cmd" | microcom -t 3000 "$port" 2>/dev/null)"
+        else
+            api_err "tool_missing" "Install atinout package: opkg install atinout. Required for AT Terminal."
+            return 1
+        fi
     fi
 
     # Clean up response: remove echo of command, CR, blank lines
