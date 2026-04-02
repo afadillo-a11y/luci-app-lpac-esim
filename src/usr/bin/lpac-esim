@@ -249,7 +249,7 @@ build_lpac_env() {
     elif [ "$BACKEND" = "mbim" ]; then
         printf 'LPAC_APDU=mbim LPAC_HTTP=%s LPAC_APDU_MBIM_DEVICE=%s' \
             "$HTTP_BACKEND" "$MBIM_DEVICE"
-        [ "$MBIM_PROXY" = "1" ] && printf ' LPAC_APDU_MBIM_PROXY=1'
+        [ "$MBIM_PROXY" = "1" ] && printf ' LPAC_APDU_MBIM_USE_PROXY=1'
     else
         printf 'LPAC_APDU=at LPAC_HTTP=%s LPAC_APDU_AT_DEVICE=%s' "$HTTP_BACKEND" "$AT_DEVICE"
     fi
