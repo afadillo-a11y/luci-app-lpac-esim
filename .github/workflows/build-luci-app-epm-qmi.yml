@@ -41,9 +41,6 @@ jobs:
             echo "VERSION=nightly" >> "$GITHUB_ENV"
           fi
 
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
       - name: Install nFPM and helpers
         shell: bash
         run: |
@@ -51,11 +48,11 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y dos2unix curl tar jq rsync file
 
-          NFPM_TAG="$(curl -sL https://api.github.com/repos/goreleaser/nfpm/releases/latest | jq -r .tag_name)"
-          NFPM_VER="${NFPM_TAG#v}"
+          # Pin nFPM to v2.35.0 to fix OpenWrt apk-tools 'v2 package format error'
+          NFPM_VER="2.35.0"
           echo "Installing nFPM ${NFPM_VER}"
           curl -fsSL \
-            "https://github.com/goreleaser/nfpm/releases/download/${NFPM_TAG}/nfpm_${NFPM_VER}_Linux_x86_64.tar.gz" \
+            "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VER}/nfpm_${NFPM_VER}_Linux_x86_64.tar.gz" \
             | tar -xz nfpm
           sudo install -m 0755 nfpm /usr/local/bin/nfpm
           nfpm --version
@@ -160,8 +157,8 @@ jobs:
           nfpm package \
             --config nfpm.yaml \
             --packager apk \
-            --target "${PKG_NAME}_${PKG_VER}_all.apk"
-          echo "Built: ${PKG_NAME}_${PKG_VER}_all.apk"
+            --target "${PKG_NAME}_${PKG_VER}_noarch.apk"
+          echo "Built: ${PKG_NAME}_${PKG_VER}_noarch.apk"
 
           ls -lh "${PKG_NAME}"_*
           sha256sum "${PKG_NAME}"_* || true
@@ -189,7 +186,7 @@ jobs:
             ## luci-app-lpac-manager ${{ env.VERSION }}
 
             Unified eSIM management package for OpenWrt.
-            **Architecture: all** — works on any OpenWrt target.
+            **Architecture: all/noarch** — works on any OpenWrt target.
 
             ### Includes
             - `/usr/bin/lpac` — environment wrapper for lpac binary
@@ -210,7 +207,10 @@ jobs:
 
             ### Install
             ```sh
+            # OpenWrt 24.10.x and below
+            opkg update
             opkg install luci-app-lpac-manager_${{ env.VERSION }}_all.ipk
-            # or OpenWrt 24+
-            apk add --allow-untrusted luci-app-lpac-manager_${{ env.VERSION }}_all.apk
+            
+            # OpenWrt 25.x and Snapshots
+            apk add --allow-untrusted luci-app-lpac-manager_${{ env.VERSION }}_noarch.apk
             ```
