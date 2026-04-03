@@ -66,24 +66,28 @@ jobs:
           mkdir -p "${PKGROOT}"
 
           # 1) Lua controller + views
-          [ -d "${REPO_ROOT}/src/usr/lib/lua/luci" ] && \
-            mkdir -p "${PKGROOT}/usr/lib/lua/luci" && \
+          if [ -d "${REPO_ROOT}/src/usr/lib/lua/luci" ]; then
+            mkdir -p "${PKGROOT}/usr/lib/lua/luci"
             rsync -a "${REPO_ROOT}/src/usr/lib/lua/luci/" "${PKGROOT}/usr/lib/lua/luci/"
+          fi
 
-          # 2) Backend shell script
-          [ -d "${REPO_ROOT}/src/usr/bin" ] && \
-            mkdir -p "${PKGROOT}/usr/bin" && \
-            rsync -a "${REPO_ROOT}/src/usr/bin/" "${PKGROOT}/usr/bin/" && \
+          # 2) Backend shell scripts
+          if [ -d "${REPO_ROOT}/src/usr/bin" ]; then
+            mkdir -p "${PKGROOT}/usr/bin"
+            rsync -a "${REPO_ROOT}/src/usr/bin/" "${PKGROOT}/usr/bin/"
             find "${PKGROOT}/usr/bin" -type f -exec chmod 0755 {} \;
+          fi
 
-          # 3) Static web resources (JS, CSS)
-          [ -d "${REPO_ROOT}/htdocs/luci-static/resources" ] && \
-            mkdir -p "${PKGROOT}/www/luci-static/resources" && \
+          # 3) Static web resources
+          if [ -d "${REPO_ROOT}/htdocs/luci-static/resources" ]; then
+            mkdir -p "${PKGROOT}/www/luci-static/resources"
             rsync -a "${REPO_ROOT}/htdocs/luci-static/resources/" "${PKGROOT}/www/luci-static/resources/"
+          fi
 
-          # 4) Root overlay (menu.d, acl.d)
-          [ -d "${REPO_ROOT}/root" ] && \
+          # 4) Root overlay
+          if [ -d "${REPO_ROOT}/root" ]; then
             rsync -a "${REPO_ROOT}/root/" "${PKGROOT}/"
+          fi
 
           # 5) Normalize legacy menu path
           mkdir -p "${PKGROOT}/usr/share/luci/menu.d"
@@ -94,8 +98,9 @@ jobs:
 
           # 6) UCI config
           mkdir -p "${PKGROOT}/etc/config"
-          [ -f "${REPO_ROOT}/etc/config/lpac-esim" ] && \
+          if [ -f "${REPO_ROOT}/etc/config/lpac-esim" ]; then
             cp "${REPO_ROOT}/etc/config/lpac-esim" "${PKGROOT}/etc/config/lpac-esim"
+          fi
 
           # 7) Normalize line endings and strip BOM
           find "${PKGROOT}" -type f \( \
@@ -109,8 +114,8 @@ jobs:
 
           # 8) Sanity checks
           echo "=== pkgroot contents ==="
-          find "${PKGROOT}" -maxdepth 8 -type f | sort
-
+          find "${PKGROOT}" -maxdepth 8 -type f | sort || true
+          
           test -f "${PKGROOT}/etc/config/lpac-esim"
           test -f "${PKGROOT}/usr/lib/lua/luci/controller/lpac_esim.lua"
           test -d "${PKGROOT}/www/luci-static/resources/lpac-esim"
@@ -139,52 +144,60 @@ jobs:
           set -euxo pipefail
           export PKG_VER="${{ env.VERSION }}"
           export APK_DIR="${GITHUB_WORKSPACE}/packaging/apk"
-
+          
           mkdir -p "${APK_DIR}"
-
-          # Pass assembled pkgroot into Alpine build directory
+          
+          # Pass the assembled pkgroot into the Alpine build directory
           cp -a "${GITHUB_WORKSPACE}/pkgroot" "${APK_DIR}/"
 
-          # Generate APKBUILD (no leading whitespace in heredoc)
-          cat > "${APK_DIR}/APKBUILD" <<APKEOF
-# Contributor: Medvedolog <Medvedolog@github.com>
-# Maintainer: Medvedolog <Medvedolog@github.com>
-pkgname="luci-app-lpac-manager"
-pkgver="${PKG_VER}"
-pkgrel=1
-pkgdesc="eSIM profile management for OpenWrt"
-url="https://github.com/Medvedolog/lpac-esim-openwrt"
-arch="noarch"
-license="MIT"
-depends="luci-base jq"
-install="\$pkgname.post-install \$pkgname.pre-deinstall"
-source=""
+          # Dynamically generate clean APKBUILD
+          # NOTE: Indentation here is strictly aligned to satisfy YAML parser
+          cat > "${APK_DIR}/APKBUILD" <<EOF
+          # Contributor: Medvedolog <Medvedolog@github.com>
+          # Maintainer: Medvedolog <Medvedolog@github.com>
+          pkgname="luci-app-lpac-manager"
+          pkgver="${PKG_VER}"
+          pkgrel=1
+          pkgdesc="eSIM profile management for OpenWrt"
+          url="https://github.com/Medvedolog/lpac-esim-openwrt"
+          arch="noarch"
+          license="MIT"
+          depends="luci-base jq"
+          install="\$pkgname.post-install"
+          source=""
 
-build() {
-    return 0
-}
+          build() {
+              return 0
+          }
 
-package() {
-    mkdir -p "\$pkgdir"
-    cp -a "\$builddir"/pkgroot/* "\$pkgdir"/
-}
-APKEOF
+          package() {
+              mkdir -p "\$pkgdir"
+              cp -a "\$builddir"/pkgroot/* "\$pkgdir"/
+          }
+          EOF
 
-          # Build inside Alpine container
+          # Run the build inside an Alpine edge container
           docker run --rm \
             -v "${APK_DIR}:/work" \
             -w /work \
             alpine:edge \
             sh -c "
               apk add --no-cache alpine-sdk sudo
+              
+              # Create a non-root user for abuild
               adduser -D -G abuild builder
               chown -R builder:abuild /work
+              
+              # Generate keys and build the package (skipping checksums due to empty source)
               su builder -c 'abuild-keygen -a -i -n'
               su builder -c 'REPODEST=/work/out abuild -r'
-              APK_FILE=\$(find /work/out -type f -name '*.apk' ! -name 'APKINDEX*' | head -n1)
+              
+              # Safely find the built APK and rename it to a predictable format
+              APK_FILE=\$(find /work/out -type f -name \"*.apk\" ! -name \"APKINDEX*\" | head -n1)
               cp \"\$APK_FILE\" \"/work/${PKG_NAME}-${PKG_VER}-r1_noarch.apk\"
             "
 
+          # Move the renamed artifact to the GitHub Actions workspace root
           mv "${APK_DIR}"/*_noarch.apk ./
           ls -lh *.apk
 
@@ -210,18 +223,18 @@ APKEOF
           body: |
             ## luci-app-lpac-manager ${{ env.VERSION }}
 
-            eSIM profile management for OpenWrt via lpac 2.3.0.
+            eSIM management package for OpenWrt.
+
+            ### Artifacts
+            - `${{ env.PKG_NAME }}_${{ env.VERSION }}_all.ipk` for OpenWrt 24.x / opkg
+            - `${{ env.PKG_NAME }}-${{ env.VERSION }}-r1_noarch.apk` for OpenWrt 25.12+ / apk (Alpine v3 ADB format)
 
             ### Install
-
-            **OpenWrt 24.x (opkg):**
             ```sh
+            # OpenWrt 24.x
+            opkg update
             opkg install luci-app-lpac-manager_${{ env.VERSION }}_all.ipk
-            ```
 
-            **OpenWrt 25.12+ (apk):**
-            ```sh
+            # OpenWrt 25.12+
             apk add --allow-untrusted luci-app-lpac-manager-${{ env.VERSION }}-r1_noarch.apk
             ```
-
-            **Prerequisites:** `lpac`, `jq`, `luci-base`. For MBIM: `libmbim`, `mbim-utils`. For AT Terminal: `atinout`.
