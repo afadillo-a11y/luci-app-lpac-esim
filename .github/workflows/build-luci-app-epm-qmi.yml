@@ -101,8 +101,9 @@ jobs:
             -o -name '*.css' -o -path '*/etc/config/*' -o -path '*/usr/bin/*' \
           \) -print0 | xargs -0 -r dos2unix
 
+          # ВНИМАНИЕ: добавлено '*.json' для удаления BOM, из-за которого падал rpcd!
           find "${PKGROOT}" -type f \( \
-            -name '*.lua' -o -name '*.js' -o -name '*.htm' -o -path '*/usr/bin/*' \
+            -name '*.lua' -o -name '*.js' -o -name '*.json' -o -name '*.htm' -o -path '*/usr/bin/*' \
           \) -print0 | xargs -0 -r sed -i '1s/^\xef\xbb\xbf//'
 
           echo "=== pkgroot contents ==="
@@ -213,7 +214,7 @@ jobs:
               cp \"\$APK_FILE\" \"/work/${PKG_NAME}-${PKG_VER}-r1_noarch.apk\"
             "
 
-          # ВОТ ОНО: Возвращаем права пользователю runner перед перемещением!
+          # Возвращаем права пользователю runner перед перемещением
           sudo chown -R $(id -u):$(id -g) "${APK_DIR}"
 
           mv "${APK_DIR}"/*_noarch.apk ./
