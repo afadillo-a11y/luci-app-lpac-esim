@@ -123,6 +123,37 @@ jobs:
           export PKG_VER="${{ env.VERSION }}"
           export SOURCE_DATE_EPOCH=1704067200
 
+          # Dynamically generate clean nfpm.yaml to prevent content collisions
+          # and ensure ZIP imports do not overwrite it with old configurations.
+          cat > nfpm.yaml <<EOF
+name: "luci-app-lpac-manager"
+platform: "linux"
+arch: "all"
+version: "${PKG_VER}"
+section: "net"
+maintainer: "Medvedolog <Medvedolog@github.com>"
+description: |
+  eSIM profile management for OpenWrt.
+  LuCI web UI + lpac-esim shell backend.
+  Supports QMI, MBIM, AT backends via lpac 2.3.0.
+depends:
+  - luci-base
+  - jq
+contents:
+  - src: ./pkgroot/usr
+    dst: /usr
+    type: tree
+  - src: ./pkgroot/www
+    dst: /www
+    type: tree
+  - src: ./pkgroot/etc
+    dst: /etc
+    type: tree
+scripts:
+  postinstall: ./scripts/postinst
+  preremove: ./scripts/prerm
+EOF
+
           nfpm package \
             --config nfpm.yaml \
             --packager ipk \
@@ -144,28 +175,28 @@ jobs:
 
           # Dynamically generate clean APKBUILD
           cat > "${APK_DIR}/APKBUILD" <<EOF
-          # Contributor: Medvedolog <Medvedolog@github.com>
-          # Maintainer: Medvedolog <Medvedolog@github.com>
-          pkgname="luci-app-lpac-manager"
-          pkgver="${PKG_VER}"
-          pkgrel=1
-          pkgdesc="eSIM profile management for OpenWrt"
-          url="https://github.com/Medvedolog/lpac-esim-openwrt"
-          arch="noarch"
-          license="MIT"
-          depends="luci-base jq"
-          install="\$pkgname.post-install \$pkgname.pre-deinstall"
-          source=""
+# Contributor: Medvedolog <Medvedolog@github.com>
+# Maintainer: Medvedolog <Medvedolog@github.com>
+pkgname="luci-app-lpac-manager"
+pkgver="${PKG_VER}"
+pkgrel=1
+pkgdesc="eSIM profile management for OpenWrt"
+url="https://github.com/Medvedolog/lpac-esim-openwrt"
+arch="noarch"
+license="MIT"
+depends="luci-base jq"
+install="\$pkgname.post-install \$pkgname.pre-deinstall"
+source=""
 
-          build() {
-              return 0
-          }
+build() {
+    return 0
+}
 
-          package() {
-              mkdir -p "\$pkgdir"
-              cp -a "\$builddir"/pkgroot/* "\$pkgdir"/
-          }
-          EOF
+package() {
+    mkdir -p "\$pkgdir"
+    cp -a "\$builddir"/pkgroot/* "\$pkgdir"/
+}
+EOF
 
           # Ensure post-install script exists
           if [ ! -f "${APK_DIR}/luci-app-lpac-manager.post-install" ]; then
