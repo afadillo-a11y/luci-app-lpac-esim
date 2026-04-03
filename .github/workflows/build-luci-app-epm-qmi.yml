@@ -117,31 +117,31 @@ jobs:
           export SOURCE_DATE_EPOCH=1704067200
 
           cat > nfpm.yaml <<EOF
-          name: "luci-app-lpac-manager"
-          platform: "linux"
-          arch: "all"
-          version: "${PKG_VER}"
-          section: "net"
-          maintainer: "Medvedolog <Medvedolog@github.com>"
-          description: |
-            eSIM profile management for OpenWrt.
-          depends:
-            - luci-base
-            - jq
-          contents:
-            - src: ./pkgroot/usr
-              dst: /usr
-              type: tree
-            - src: ./pkgroot/www
-              dst: /www
-              type: tree
-            - src: ./pkgroot/etc
-              dst: /etc
-              type: tree
-          scripts:
-            postinstall: ./scripts/postinst
-            preremove: ./scripts/prerm
-          EOF
+name: "luci-app-lpac-manager"
+platform: "linux"
+arch: "all"
+version: "${PKG_VER}"
+section: "net"
+maintainer: "Medvedolog <Medvedolog@github.com>"
+description: |
+  eSIM profile management for OpenWrt.
+depends:
+  - luci-base
+  - jq
+contents:
+  - src: ./pkgroot/usr
+    dst: /usr
+    type: tree
+  - src: ./pkgroot/www
+    dst: /www
+    type: tree
+  - src: ./pkgroot/etc
+    dst: /etc
+    type: tree
+scripts:
+  postinstall: ./scripts/postinst
+  preremove: ./scripts/prerm
+EOF
 
           nfpm package --config nfpm.yaml --packager ipk --target "${PKG_NAME}_${PKG_VER}_all.ipk"
 
@@ -156,23 +156,31 @@ jobs:
           cp -a "${GITHUB_WORKSPACE}/pkgroot" "${APK_DIR}/"
 
           cat > "${APK_DIR}/APKBUILD" <<EOF
-          # Maintainer: Medvedolog <Medvedolog@github.com>
-          pkgname="luci-app-lpac-manager"
-          pkgver="${PKG_VER}"
-          pkgrel=1
-          pkgdesc="eSIM profile management for OpenWrt"
-          url="https://github.com/Medvedolog/lpac-esim-openwrt"
-          arch="noarch"
-          license="MIT"
-          depends="luci-base jq"
-          install="\$pkgname.post-install \$pkgname.pre-deinstall"
-          options="!check"
+# Maintainer: Medvedolog <Medvedolog@github.com>
+pkgname="luci-app-lpac-manager"
+pkgver="${PKG_VER}"
+pkgrel=1
+pkgdesc="eSIM profile management for OpenWrt"
+url="https://github.com/Medvedolog/lpac-esim-openwrt"
+arch="noarch"
+license="MIT"
+depends="luci-base jq"
+install="\$pkgname.post-install \$pkgname.pre-deinstall"
+options="!check !tracedeps"
 
-          package() {
-              mkdir -p "\$pkgdir"
-              cp -a "\$startdir"/pkgroot/* "\$pkgdir"/
-          }
-          EOF
+package() {
+    mkdir -p "\$pkgdir"
+    cp -a "\$startdir"/pkgroot/* "\$pkgdir"/
+}
+EOF
+
+          if [ ! -f "${APK_DIR}/luci-app-lpac-manager.post-install" ]; then
+            echo -e "#!/bin/sh\nexit 0" > "${APK_DIR}/luci-app-lpac-manager.post-install"
+          fi
+
+          if [ ! -f "${APK_DIR}/luci-app-lpac-manager.pre-deinstall" ]; then
+            echo -e "#!/bin/sh\nexit 0" > "${APK_DIR}/luci-app-lpac-manager.pre-deinstall"
+          fi
 
           docker run --rm -v "${APK_DIR}:/work" -w /work alpine:edge sh -c "
             apk add --no-cache alpine-sdk sudo
@@ -205,3 +213,23 @@ jobs:
             *.apk
           name: "Release ${{ env.VERSION }}"
           tag_name: "v${{ env.VERSION }}"
+          prerelease: false
+          draft: false
+          body: |
+            ## luci-app-lpac-manager ${{ env.VERSION }}
+
+            eSIM management package for OpenWrt.
+
+            ### Artifacts
+            - `${{ env.PKG_NAME }}_${{ env.VERSION }}_all.ipk` for OpenWrt 24.x / opkg
+            - `${{ env.PKG_NAME }}-${{ env.VERSION }}-r1_noarch.apk` for OpenWrt 25.12+ / apk (Alpine v3 ADB format)
+
+            ### Install
+            ```sh
+            # OpenWrt 24.x
+            opkg update
+            opkg install luci-app-lpac-manager_${{ env.VERSION }}_all.ipk
+
+            # OpenWrt 25.12+
+            apk add --allow-untrusted luci-app-lpac-manager-${{ env.VERSION }}-r1_noarch.apk
+            ```
