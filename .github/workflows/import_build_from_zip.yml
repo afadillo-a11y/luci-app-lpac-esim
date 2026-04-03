@@ -1,8 +1,9 @@
-# .github/workflows/import_build_from_zip.yml — v1.3.0
+# .github/workflows/import_build_from_zip.yml — v1.3.5
 # Imports a development ZIP into the repository source tree layout.
 # Run manually: Actions → import-from-zip → Run workflow
 #
 # Changelog:
+#   1.3.5 - Added packaging/ directory support for Alpine APK builds
 #   1.3.0 - Updated defaults for luci-app-lpac-manager naming
 
 name: import-from-zip
@@ -13,15 +14,15 @@ on:
       zip_path:
         description: "Path to zip inside the repository"
         required: true
-        default: "_incoming/luci-app-lpac-manager-v1.3.0.zip"
+        default: "_incoming/luci-app-lpac-manager-v1.3.5.zip"
       source_root:
         description: "Root folder name inside the zip"
         required: true
-        default: "luci-app-lpac-esim"
+        default: "luci-app-lpac-manager"
       commit_message:
         description: "Commit message"
         required: true
-        default: "Import luci-app-lpac-manager v1.3.0 from ZIP"
+        default: "Import luci-app-lpac-manager v1.3.5 from ZIP"
 
 permissions:
   contents: write
@@ -105,6 +106,7 @@ jobs:
           mkdir -p root/usr/share/luci/menu.d
           mkdir -p root/usr/share/rpcd/acl.d
           mkdir -p scripts
+          mkdir -p packaging/apk
 
       - name: Import files preserving repo layout
         shell: bash
@@ -112,13 +114,14 @@ jobs:
           set -euo pipefail
           SRC="${{ steps.detect.outputs.src }}"
 
-          # Clean only the parts we're importing
+          # Clean only the parts we are importing
           rm -rf htdocs/*
           rm -rf src/usr/*
           rm -rf etc/config/*
           rm -rf root/usr/share/luci/menu.d/*
           rm -rf root/usr/share/rpcd/acl.d/*
           rm -rf scripts/*
+          rm -rf packaging/*
 
           # Copy each component
           cp -a "$SRC/htdocs/." htdocs/
@@ -137,7 +140,11 @@ jobs:
             cp -a "$SRC/scripts/." scripts/
           fi
 
-          # nfpm config
+          if [ -d "$SRC/packaging" ]; then
+            cp -a "$SRC/packaging/." packaging/
+          fi
+
+          # Copy nFPM config
           cp -a "$SRC/nfpm.yaml" nfpm.yaml
 
           # Do NOT overwrite .github/workflows — those are managed separately
@@ -146,21 +153,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Ensure execution rights for all binary and installation scripts
           find src/usr/bin -type f -exec chmod +x {} \; 2>/dev/null || true
           find scripts -type f -exec chmod +x {} \; 2>/dev/null || true
+          find packaging/apk -type f -exec chmod +x {} \; 2>/dev/null || true
 
       - name: Post-import validation
         shell: bash
         run: |
           set -euo pipefail
           echo "=== Imported files ==="
-          find src htdocs etc root scripts -type f | sort
+          find src htdocs etc root scripts packaging -type f | sort
           echo ""
           echo "=== Key files check ==="
           test -f src/usr/bin/lpac-esim && echo "OK: lpac-esim backend" || echo "WARN: lpac-esim not found"
-          test -f src/usr/bin/lpac-wrapper.sh && echo "OK: lpac-wrapper.sh" || echo "WARN: wrapper not found"
           test -f src/usr/lib/lua/luci/controller/lpac_esim.lua && echo "OK: Lua controller" || echo "WARN: controller not found"
           test -f nfpm.yaml && echo "OK: nfpm.yaml" || echo "WARN: nfpm.yaml not found"
+          test -d packaging/apk && echo "OK: Alpine APK packaging structure" || echo "WARN: packaging/apk directory not found"
 
       - name: Show git diff summary
         shell: bash
@@ -177,7 +186,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add htdocs src etc root scripts nfpm.yaml
+          # Add all imported components to the commit
+          git add htdocs src etc root scripts packaging nfpm.yaml
 
           if git diff --cached --quiet; then
             echo "No changes to commit"
