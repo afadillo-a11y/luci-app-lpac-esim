@@ -5,28 +5,28 @@ set +e
 echo "=============================================="
 echo " luci-app-lpac-manager installed."
 echo ""
-echo " Includes: lpac-esim backend script"
-echo " and LuCI eSIM Manager web interface."
-echo ""
 echo " Prerequisites (install separately):"
-echo "   lpac, libqmi/qmi-utils, luci-base, jq"
-echo "   For MBIM: libmbim/mbim-utils"
+echo "   lpac, luci-base, jq"
+echo "   For QMI: libqmi, qmi-utils"
+echo "   For MBIM: libmbim, mbim-utils"
 echo "   For AT Terminal: atinout"
 echo ""
 echo " Navigate to: Modem → eSIM Manager"
 echo "=============================================="
 
-chmod +x /usr/bin/lpac-esim 2>/dev/null || true
+# Ensure backend script is executable
+[ -f /usr/bin/lpac-esim ] && chmod 0755 /usr/bin/lpac-esim 2>/dev/null || true
 
 # Fix directory permissions (opkg/nfpm may strip them)
 chmod 755 /usr/share/luci/menu.d 2>/dev/null || true
 chmod 755 /usr/share/rpcd/acl.d 2>/dev/null || true
 
-if [ -x /etc/init.d/rpcd ]; then
-    /etc/init.d/rpcd reload >/dev/null 2>&1 || true
-fi
+# Reload RPC daemon to apply new ACLs
+[ -x /etc/init.d/rpcd ] && /etc/init.d/rpcd reload >/dev/null 2>&1 || true
 
-rm -rf /tmp/luci-modulecache /tmp/luci-indexcache* >/dev/null 2>&1 || true
+# Clear LuCI cache
+rm -f /tmp/luci-indexcache* >/dev/null 2>&1 || true
+rm -rf /tmp/luci-modulecache >/dev/null 2>&1 || true
 
 logger -t lpac-esim "luci-app-lpac-manager v1.3.5 installed."
 exit 0
