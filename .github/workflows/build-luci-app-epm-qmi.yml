@@ -176,6 +176,7 @@ jobs:
           depends="luci-base jq"
           install="\$pkgname.post-install \$pkgname.pre-deinstall"
           source=""
+          options="!check"
 
           build() {
               return 0
@@ -183,7 +184,8 @@ jobs:
 
           package() {
               mkdir -p "\$pkgdir"
-              cp -a "\$builddir"/pkgroot/* "\$pkgdir"/
+              # Use \$startdir instead of \$builddir because we didn't unpack a source tarball
+              cp -a "\$startdir"/pkgroot/* "\$pkgdir"/
           }
           EOF
 
